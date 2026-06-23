@@ -1,0 +1,36 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{FB848134-43B7-44DD-9365-61E47455B7B7}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HanEngIndicator", "src\HanEngIndicator\HanEngIndicator.csproj", "{F19AC193-5C60-4C44-AFEA-340B265A7E4D}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{9A514F92-6ACD-4343-80F7-EADF8C697181}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HanEngIndicator.Tests", "tests\HanEngIndicator.Tests\HanEngIndicator.Tests.csproj", "{A5F10089-552A-40C9-979F-ED3D9A91926C}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{F19AC193-5C60-4C44-AFEA-340B265A7E4D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F19AC193-5C60-4C44-AFEA-340B265A7E4D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F19AC193-5C60-4C44-AFEA-340B265A7E4D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F19AC193-5C60-4C44-AFEA-340B265A7E4D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A5F10089-552A-40C9-979F-ED3D9A91926C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A5F10089-552A-40C9-979F-ED3D9A91926C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A5F10089-552A-40C9-979F-ED3D9A91926C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A5F10089-552A-40C9-979F-ED3D9A91926C}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{F19AC193-5C60-4C44-AFEA-340B265A7E4D} = {FB848134-43B7-44DD-9365-61E47455B7B7}
+		{A5F10089-552A-40C9-979F-ED3D9A91926C} = {9A514F92-6ACD-4343-80F7-EADF8C697181}
+	EndGlobalSection
+EndGlobal

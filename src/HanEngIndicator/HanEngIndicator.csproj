@@ -1,0 +1,69 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>HanEngIndicator</AssemblyName>
+    <RootNamespace>HanEngIndicator</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Resources\app.ico</ApplicationIcon>
+    <Version>1.0.0</Version>
+    <FileVersion>1.0.0.0</FileVersion>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <Product>HanEngIndicator</Product>
+    <Description>Korean/English IME input-state indicator overlay</Description>
+    <!-- Publish defaults; can be overridden on the command line -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- MSB3243: harmless ref duplication during the Linux cross-build path. -->
+    <NoWarn>$(NoWarn);MSB3243</NoWarn>
+
+    <!-- Single-file, self-contained publish defaults. Because the UI Automation
+         caret fallback pulls in WPF native libraries, we bundle them inside the
+         executable so the deliverable is one standalone .exe (no loose DLLs). -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <!-- UI Automation, used as a caret-location fallback for non-Win32 controls. -->
+  <ItemGroup>
+    <Reference Include="UIAutomationClient" />
+    <Reference Include="UIAutomationTypes" />
+  </ItemGroup>
+
+  <!--
+    On a real Windows developer machine the official .NET SDK ships the
+    "Microsoft.NET.Sdk.WindowsDesktop" MSBuild SDK, so we just turn on the
+    standard, idiomatic WinForms support.
+  -->
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <UseWindowsForms>true</UseWindowsForms>
+  </PropertyGroup>
+
+  <!--
+    On non-Windows hosts (e.g. a Linux CI runner) the WindowsDesktop MSBuild
+    SDK is not present. We can still cross-compile and publish a win-x64
+    WinForms binary by enabling Windows targeting, skipping the missing
+    WindowsDesktop targets import, and pulling the desktop reference/runtime
+    packs in directly via a FrameworkReference.
+  -->
+  <PropertyGroup Condition="!$([MSBuild]::IsOSPlatform('Windows'))">
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <ImportWindowsDesktopTargets>false</ImportWindowsDesktopTargets>
+  </PropertyGroup>
+  <ItemGroup Condition="!$([MSBuild]::IsOSPlatform('Windows'))">
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App" />
+    <!-- UseWindowsForms (Windows-only path) normally injects these; add them
+         explicitly for the cross-build so the same source compiles. -->
+    <Using Include="System.Windows.Forms" />
+    <Using Include="System.Drawing" />
+  </ItemGroup>
+
+</Project>

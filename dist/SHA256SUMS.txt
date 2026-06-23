@@ -1,0 +1,2 @@
+1b25671f75f4e6182b14860a358b318e102c58b65d9244980fae0def7f37c0fb  HanEngIndicator.exe
+7c4a87686bba9b8dde3507f3e7917e6f8e7f6ccffea48f77cd79c0c12d87fa93  HanEngIndicator-win-x64.zip
