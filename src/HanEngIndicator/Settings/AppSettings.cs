@@ -52,8 +52,8 @@ public sealed class AppSettings
     /// <summary>Badge size scale relative to the 96-DPI base size. 1.0 = ~28px.</summary>
     public double FontScale { get; set; } = 1.0;
 
-    /// <summary>Overlay opacity, 0.2 - 1.0.</summary>
-    public double Opacity { get; set; } = 0.92;
+    /// <summary>Overlay opacity, 0.2 - 1.0. Menu offers 50% / 75% / 100%.</summary>
+    public double Opacity { get; set; } = 1.0;
 
     /// <summary>Horizontal offset (logical px @96dpi) from the anchor.</summary>
     public int OffsetX { get; set; } = 12;

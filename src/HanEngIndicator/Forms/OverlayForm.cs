@@ -42,8 +42,13 @@ public sealed class OverlayForm : Form
         get
         {
             CreateParams cp = base.CreateParams;
-            cp.ExStyle |= NativeMethods.WS_EX_LAYERED      // alpha / translucency
-                        | NativeMethods.WS_EX_TRANSPARENT  // click-through
+            // NOTE: We deliberately do NOT set WS_EX_LAYERED here. The WinForms
+            // Opacity property manages the layered style itself (adding it only
+            // when Opacity < 1 and removing it at 1.0). Forcing WS_EX_LAYERED on
+            // top of that left the window in an inconsistent layered state and
+            // made opacity behave non-linearly. Click-through is provided by
+            // WS_EX_TRANSPARENT plus the WM_NCHITTEST override below.
+            cp.ExStyle |= NativeMethods.WS_EX_TRANSPARENT  // click-through
                         | NativeMethods.WS_EX_NOACTIVATE   // never take focus
                         | NativeMethods.WS_EX_TOOLWINDOW   // hidden from Alt-Tab/taskbar
                         | NativeMethods.WS_EX_TOPMOST;     // always on top

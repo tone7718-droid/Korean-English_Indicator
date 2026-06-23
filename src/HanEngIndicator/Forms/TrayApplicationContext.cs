@@ -307,7 +307,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         (string label, double value)[] options =
         {
-            ("60%", 0.6), ("75%", 0.75), ("92%", 0.92), ("100%", 1.0),
+            ("50%", 0.5), ("75%", 0.75), ("100%", 1.0),
         };
         return options.Select(o =>
         {
