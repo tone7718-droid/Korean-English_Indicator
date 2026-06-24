@@ -36,7 +36,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             Text = "HanEng Indicator (한/영 표시기)",
             Visible = true,
-            Icon = BuildTrayIcon(InputMode.Korean),
+            Icon = BuildTrayIcon(InputMode.Korean, "가"),
             ContextMenuStrip = BuildMenu(),
         };
         _tray.DoubleClick += (_, _) => ToggleEnabled();
@@ -50,7 +50,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     // ----- main loop --------------------------------------------------------
 
-    private InputMode _lastTrayMode = InputMode.Unknown;
+    private string _lastTrayGlyph = string.Empty;
 
     private void OnTick(object? sender, EventArgs e)
     {
@@ -63,7 +63,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             }
 
             InputStateSnapshot snapshot = _detector.Detect();
-            UpdateTrayIcon(snapshot.Mode);
+            UpdateTrayIcon(snapshot.Mode, snapshot.CapsLock);
 
             bool show = snapshot.Mode switch
             {
@@ -114,7 +114,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             topLeft = PositionCalculator.ComputeTopLeft(anchor.ScreenRect, badgeSize, offsetPx, workArea);
         }
 
-        _overlay.ShowBadge(snapshot.Mode, topLeft, badge, _settings.Opacity);
+        _overlay.ShowBadge(snapshot.Mode, snapshot.CapsLock, topLeft, badge, _settings.Opacity);
     }
 
     private static uint GetDpiForPoint(Point p)
@@ -152,31 +152,32 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     // ----- tray icon --------------------------------------------------------
 
-    private void UpdateTrayIcon(InputMode mode)
+    private void UpdateTrayIcon(InputMode mode, bool capsLock)
     {
-        if (mode == InputMode.Unknown || mode == _lastTrayMode)
+        if (mode == InputMode.Unknown)
         {
             return;
         }
 
-        _lastTrayMode = mode;
-        UpdateTrayIconImage(mode);
-    }
+        string glyph = BadgeText.Glyph(mode, capsLock);
+        if (glyph.Length == 0 || glyph == _lastTrayGlyph)
+        {
+            return;
+        }
 
-    private void UpdateTrayIconImage(InputMode mode)
-    {
-        Icon newIcon = BuildTrayIcon(mode);
+        _lastTrayGlyph = glyph;
+        Icon newIcon = BuildTrayIcon(mode, glyph);
         _tray.Icon = newIcon;
         _trayIconHandle?.Dispose();
         _trayIconHandle = newIcon;
     }
 
-    private static Icon BuildTrayIcon(InputMode mode)
+    private static Icon BuildTrayIcon(InputMode mode, string glyph)
     {
-        Color back = mode == InputMode.Korean
+        bool korean = mode == InputMode.Korean;
+        Color back = korean
             ? Color.FromArgb(0x1F, 0x6F, 0xD6)
             : Color.FromArgb(0xD9, 0x6A, 0x00);
-        string text = mode == InputMode.Korean ? "가" : "A";
 
         using var bmp = new Bitmap(32, 32);
         using (Graphics g = Graphics.FromImage(bmp))
@@ -185,11 +186,11 @@ public sealed class TrayApplicationContext : ApplicationContext
             g.Clear(Color.Transparent);
             using var brush = new SolidBrush(back);
             g.FillEllipse(brush, 1, 1, 30, 30);
-            using var font = new Font(mode == InputMode.Korean ? "Malgun Gothic" : "Segoe UI",
-                mode == InputMode.Korean ? 16f : 18f, FontStyle.Bold, GraphicsUnit.Pixel);
+            using var font = new Font(korean ? "Malgun Gothic" : "Segoe UI",
+                korean ? 16f : 18f, FontStyle.Bold, GraphicsUnit.Pixel);
             using var tb = new SolidBrush(Color.White);
             using var fmt = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-            g.DrawString(text, font, tb, new RectangleF(0, 0, 32, 32), fmt);
+            g.DrawString(glyph, font, tb, new RectangleF(0, 0, 32, 32), fmt);
         }
 
         return Icon.FromHandle(bmp.GetHicon());

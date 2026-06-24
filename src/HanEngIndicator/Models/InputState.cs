@@ -28,8 +28,27 @@ public readonly record struct InputStateSnapshot(
     bool ImeOpen,
     int KeyboardLayoutId,
     string ForegroundWindowClass,
-    uint ForegroundThreadId)
+    uint ForegroundThreadId,
+    bool CapsLock = false)
 {
     public static InputStateSnapshot Unknown { get; } = new(
-        InputMode.Unknown, false, false, 0, string.Empty, 0);
+        InputMode.Unknown, false, false, 0, string.Empty, 0, false);
+}
+
+/// <summary>
+/// Maps an input state to the glyph shown on the badge. Pure and side-effect
+/// free so it can be unit-tested.
+///   Korean              -> "가"
+///   English + Caps Lock -> "A"  (uppercase)
+///   English (no Caps)   -> "a"  (lowercase)
+///   Unknown             -> ""   (badge hidden)
+/// </summary>
+public static class BadgeText
+{
+    public static string Glyph(InputMode mode, bool capsLock) => mode switch
+    {
+        InputMode.Korean => "가",
+        InputMode.English => capsLock ? "A" : "a",
+        _ => string.Empty,
+    };
 }

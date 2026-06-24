@@ -73,8 +73,11 @@ public sealed class ImeDetector
             }
         }
 
+        // Only meaningful for English input: Caps Lock decides A (upper) vs a (lower).
+        bool capsLock = mode == InputMode.English && NativeMethods.IsCapsLockOn();
+
         var snapshot = new InputStateSnapshot(
-            mode, koreanLayout, imeOpen, layoutId, className, threadId);
+            mode, koreanLayout, imeOpen, layoutId, className, threadId, capsLock);
 
         if (_logger.Enabled)
         {

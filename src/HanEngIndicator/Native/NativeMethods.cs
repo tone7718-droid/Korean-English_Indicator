@@ -23,6 +23,15 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern IntPtr GetKeyboardLayout(uint idThread);
 
+    [DllImport("user32.dll")]
+    public static extern short GetKeyState(int nVirtKey);
+
+    /// <summary>Virtual key code for Caps Lock.</summary>
+    public const int VK_CAPITAL = 0x14;
+
+    /// <summary>True when Caps Lock is toggled on (low-order bit of GetKeyState).</summary>
+    public static bool IsCapsLockOn() => (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
+
     // ---- IME (IMM32) -------------------------------------------------------
 
     [DllImport("imm32.dll")]

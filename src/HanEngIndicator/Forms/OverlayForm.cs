@@ -14,6 +14,7 @@ namespace HanEngIndicator.Forms;
 public sealed class OverlayForm : Form
 {
     private InputMode _mode = InputMode.Unknown;
+    private bool _capsLock;
     private int _badgeSize = 28;
     private float _fontPx = 16f;
 
@@ -75,9 +76,10 @@ public sealed class OverlayForm : Form
     /// Update the badge content, size, position (physical px) and opacity, then
     /// show it - all without activating or stealing focus.
     /// </summary>
-    public void ShowBadge(InputMode mode, Point location, int badgeSize, double opacity)
+    public void ShowBadge(InputMode mode, bool capsLock, Point location, int badgeSize, double opacity)
     {
         _mode = mode;
+        _capsLock = capsLock;
         _badgeSize = Math.Max(16, badgeSize);
         _fontPx = _badgeSize * 0.56f;
 
@@ -134,7 +136,7 @@ public sealed class OverlayForm : Form
         int radius = Math.Max(4, _badgeSize / 5);
 
         Color back = _mode == InputMode.Korean ? KoreanBack : EnglishBack;
-        string text = _mode == InputMode.Korean ? "가" : "A";
+        string text = BadgeText.Glyph(_mode, _capsLock);
 
         using (GraphicsPath path = RoundedRect(rect, radius))
         using (var brush = new SolidBrush(back))

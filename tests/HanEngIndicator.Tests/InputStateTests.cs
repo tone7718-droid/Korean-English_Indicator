@@ -34,4 +34,15 @@ public class InputStateTests
         Assert.False(CaretAnchor.None.HasValue);
         Assert.Equal(CaretSource.None, CaretAnchor.None.Source);
     }
+
+    [Theory]
+    [InlineData(InputMode.Korean, false, "가")]
+    [InlineData(InputMode.Korean, true, "가")]   // Caps Lock irrelevant in Korean
+    [InlineData(InputMode.English, true, "A")]    // Caps Lock on -> uppercase
+    [InlineData(InputMode.English, false, "a")]   // Caps Lock off -> lowercase
+    [InlineData(InputMode.Unknown, false, "")]
+    public void BadgeText_maps_mode_and_caps_to_glyph(InputMode mode, bool caps, string expected)
+    {
+        Assert.Equal(expected, BadgeText.Glyph(mode, caps));
+    }
 }
