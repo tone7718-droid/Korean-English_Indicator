@@ -53,7 +53,7 @@ public sealed class ImeDetector
         }
         else
         {
-            ConversionProbe probe = ProbeConversionMode(foreground);
+            ConversionProbe probe = ProbeConversionMode(foreground, threadId);
             imeOpen = probe.Open;
 
             if (!probe.HasValue)
@@ -88,14 +88,16 @@ public sealed class ImeDetector
 
     private readonly record struct ConversionProbe(bool HasValue, bool Open, int ConversionMode);
 
-    private ConversionProbe ProbeConversionMode(IntPtr foreground)
+    private ConversionProbe ProbeConversionMode(IntPtr foreground, uint threadId)
     {
         // --- Primary: WM_IME_CONTROL to the default IME window ---
         IntPtr imeWnd = NativeMethods.ImmGetDefaultIMEWnd(foreground);
+        bool sentOk = false;
         if (imeWnd != IntPtr.Zero)
         {
             bool gotMode = TrySendImeControl(imeWnd, NativeMethods.IMC_GETCONVERSIONMODE, out int conv);
             bool gotOpen = TrySendImeControl(imeWnd, NativeMethods.IMC_GETOPENSTATUS, out int open);
+            sentOk = gotMode;
 
             if (gotMode)
             {
@@ -107,34 +109,49 @@ public sealed class ImeDetector
         }
 
         // --- Fallback: IMM context on the focused control ---
+        // GetGUIThreadInfo success/failure on the foreground thread is a strong
+        // signal: if it fails, our process most likely cannot reach the target
+        // window because the target runs at a higher integrity level
+        // (i.e. the foreground app is elevated / "관리자 권한"), and Windows UIPI
+        // blocks cross-integrity access.
         var gui = new NativeMethods.GUITHREADINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.GUITHREADINFO>() };
-        uint tid = NativeMethods.GetWindowThreadProcessId(foreground, out _);
-        IntPtr target = foreground;
-        if (NativeMethods.GetGUIThreadInfo(tid, ref gui) && gui.hwndFocus != IntPtr.Zero)
-        {
-            target = gui.hwndFocus;
-        }
+        bool guiOk = NativeMethods.GetGUIThreadInfo(threadId, ref gui);
+        IntPtr target = (guiOk && gui.hwndFocus != IntPtr.Zero) ? gui.hwndFocus : foreground;
 
         IntPtr himc = NativeMethods.ImmGetContext(target);
+        ConversionProbe result;
         if (himc == IntPtr.Zero)
         {
-            return new ConversionProbe(false, false, 0);
+            result = new ConversionProbe(false, false, 0);
         }
-
-        try
+        else
         {
             bool open = NativeMethods.ImmGetOpenStatus(himc);
             if (NativeMethods.ImmGetConversionStatus(himc, out int conversion, out _))
             {
-                return new ConversionProbe(true, open, conversion);
+                result = new ConversionProbe(true, open, conversion);
             }
-        }
-        finally
-        {
+            else
+            {
+                result = new ConversionProbe(false, false, 0);
+            }
+
             NativeMethods.ImmReleaseContext(target, himc);
         }
 
-        return new ConversionProbe(false, false, 0);
+        if (_logger.Enabled)
+        {
+            string hint = (!result.HasValue && !sentOk && !guiOk)
+                ? "  <-- likely the foreground app is ELEVATED (UIPI block). Try running this app as administrator."
+                : (!result.HasValue ? "  <-- IME state not exposed by this control (non-standard/TSF control)." : string.Empty);
+
+            _logger.Log(string.Create(CultureInfo.InvariantCulture,
+                $"PROBE imeWnd={(imeWnd != IntPtr.Zero ? "yes" : "no")} wmImeControl={(sentOk ? "ok" : "fail")} " +
+                $"guiThreadInfo={(guiOk ? "ok" : "fail")} immContext={(himc != IntPtr.Zero ? "yes" : "no")} " +
+                $"result={(result.HasValue ? "ok" : "none")}{hint}"));
+        }
+
+        return result;
     }
 
     private static bool TrySendImeControl(IntPtr imeWnd, int command, out int result)
