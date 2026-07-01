@@ -5,13 +5,13 @@ using HanEngIndicator.Models;
 using HanEngIndicator.Native;
 using HanEngIndicator.Services;
 using HanEngIndicator.Settings;
-using Timer = System.Windows.Forms.Timer;
 
 namespace HanEngIndicator.Forms;
 
 /// <summary>
-/// The application root: owns the tray icon, the settings menu, the polling
-/// timer and the overlay. There is no main window - the app lives in the tray.
+/// The application root: owns the tray icon, the settings menu, the background
+/// polling worker and the overlay. There is no main window - the app lives in
+/// the tray.
 /// </summary>
 public sealed class TrayApplicationContext : ApplicationContext
 {
@@ -21,8 +21,13 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly CaretLocator _caret;
     private readonly OverlayForm _overlay;
     private readonly NotifyIcon _tray;
-    private readonly Timer _timer;
     private Icon? _trayIconHandle;
+
+    // Background polling worker + coordination.
+    private readonly Thread _worker;
+    private readonly CancellationTokenSource _cts = new();
+    private readonly ManualResetEventSlim _wake = new(false);
+    private volatile int _intervalMs;
 
     public TrayApplicationContext()
     {
@@ -42,85 +47,113 @@ public sealed class TrayApplicationContext : ApplicationContext
         _lastTrayGlyph = "가";
         _tray.DoubleClick += (_, _) => ToggleEnabled();
 
-        _timer = new Timer { Interval = _settings.PollingIntervalMs };
-        _timer.Tick += OnTick;
-        _timer.Start();
+        // Ensure the overlay window handle exists on the UI thread so the worker
+        // can marshal updates to it via BeginInvoke from the very first cycle.
+        _ = _overlay.Handle;
+
+        // All the heavy, potentially-blocking inter-process inspection (IME
+        // queries via SendMessageTimeout, and UI Automation) runs on this
+        // dedicated background thread - NOT on the UI thread. The UI thread only
+        // paints the badge and services the tray menu, so it can never be hung
+        // by a slow/unresponsive foreground app. The thread stays MTA (default),
+        // which is also the correct/safe apartment for UI Automation clients.
+        _intervalMs = _settings.PollingIntervalMs;
+        _worker = new Thread(WorkerLoop)
+        {
+            IsBackground = true,
+            Name = "HanEngIndicator.Worker",
+        };
+        _worker.Start();
 
         _logger.Log("---- HanEngIndicator started ----");
     }
 
-    // ----- main loop --------------------------------------------------------
+    // ----- main loop (background worker thread) -----------------------------
 
-    private string _lastTrayGlyph = string.Empty;
-    private InputStateSnapshot _lastGood = InputStateSnapshot.Unknown;
-    private DateTime _lastGoodAtUtc = DateTime.MinValue;
+    private bool _suppressAutoStartEvent;              // UI thread only
+    private string _lastTrayGlyph = string.Empty;      // UI thread only
+    private InputMode _lastGoodMode = InputMode.Unknown; // worker thread only
+    private bool _lastGoodCaps;                          // worker thread only
+    private DateTime _lastGoodAtUtc = DateTime.MinValue; // worker thread only
 
-    private void OnTick(object? sender, EventArgs e)
+    /// <summary>A single unit of work handed from the worker to the UI thread.</summary>
+    private readonly record struct OverlayCommand(
+        bool Show, InputMode Mode, bool CapsLock, Point Location, int BadgeSize, double Opacity)
     {
-        try
+        public static OverlayCommand Idle { get; } =
+            new(false, InputMode.Unknown, false, Point.Empty, 0, 1.0);
+    }
+
+    private void WorkerLoop()
+    {
+        while (!_cts.IsCancellationRequested)
         {
-            if (!_settings.Enabled)
+            try
             {
-                _overlay.HideBadge();
-                return;
+                RunOneCycle();
+            }
+            catch (Exception ex)
+            {
+                _logger.Log("worker " + ex.GetType().Name);
             }
 
-            InputStateSnapshot snapshot = _detector.Detect();
-
-            // Hysteresis: a single transient Unknown (foreground momentarily
-            // null during a window/dialog switch, or an IME query that timed
-            // out because the target was briefly busy) must NOT blink the badge
-            // off. Keep showing the last known good state for a short grace
-            // period; only hide if the gap persists.
-            if (snapshot.Mode == InputMode.Unknown)
+            // Sleep until the next cycle, waking early if settings changed or we
+            // are shutting down.
+            if (_wake.Wait(Math.Max(30, _intervalMs)))
             {
-                int graceMs = Math.Max(800, _settings.PollingIntervalMs * 6);
-                if (_lastGood.Mode != InputMode.Unknown &&
-                    (DateTime.UtcNow - _lastGoodAtUtc).TotalMilliseconds <= graceMs)
-                {
-                    snapshot = _lastGood;
-                }
+                _wake.Reset();
             }
-            else
-            {
-                _lastGood = snapshot;
-                _lastGoodAtUtc = DateTime.UtcNow;
-            }
-
-            UpdateTrayIcon(snapshot.Mode, snapshot.CapsLock);
-
-            bool show = snapshot.Mode switch
-            {
-                InputMode.Unknown => false,
-                InputMode.English => _settings.DisplayPolicy == DisplayPolicy.Always,
-                InputMode.Korean => true,
-                _ => false,
-            };
-
-            if (!show)
-            {
-                _overlay.HideBadge();
-                return;
-            }
-
-            PlaceOverlay(snapshot);
-        }
-        catch (Exception ex)
-        {
-            _logger.Log("ERROR tick: " + ex.GetType().Name);
         }
     }
 
-    private void PlaceOverlay(InputStateSnapshot snapshot)
+    private void RunOneCycle()
+    {
+        if (!_settings.Enabled)
+        {
+            PostToUi(OverlayCommand.Idle);
+            return;
+        }
+
+        InputStateSnapshot snapshot = _detector.Detect();
+
+        if (snapshot.Mode != InputMode.Unknown)
+        {
+            _lastGoodMode = snapshot.Mode;
+            _lastGoodCaps = snapshot.CapsLock;
+            _lastGoodAtUtc = DateTime.UtcNow;
+        }
+
+        int graceMs = Math.Max(800, _intervalMs * 6);
+        OverlayDecision decision = OverlayPolicy.Decide(
+            snapshot, _lastGoodMode, _lastGoodCaps, _lastGoodAtUtc,
+            DateTime.UtcNow, graceMs, _settings.DisplayPolicy);
+
+        if (!decision.Show)
+        {
+            // Still carry the mode/caps so the tray icon stays accurate even
+            // while the overlay is hidden (e.g. English under Korean-only).
+            PostToUi(new OverlayCommand(false, decision.Mode, decision.CapsLock, Point.Empty, 0, _settings.Opacity));
+            return;
+        }
+
+        PostToUi(ComputePlacement(snapshot, decision));
+    }
+
+    /// <summary>
+    /// Compute the badge placement. Position is derived from the CURRENT
+    /// foreground/caret (via <paramref name="snapshot"/>), never from a stale
+    /// grace-period state; only the glyph (mode/caps) comes from the decision.
+    /// Runs on the worker thread.
+    /// </summary>
+    private OverlayCommand ComputePlacement(InputStateSnapshot snapshot, OverlayDecision decision)
     {
         CaretAnchor anchor = _caret.Locate(snapshot, _settings);
 
-        // Reference point used to pick the monitor + DPI.
         Point reference = anchor.HasValue
             ? new Point(anchor.ScreenRect.Right, anchor.ScreenRect.Bottom)
-            : Cursor.Position;
+            : Control.MousePosition;
 
-        uint dpi = GetDpiForPoint(reference);
+        uint dpi = GetForegroundDpi(reference);
         Rectangle workArea = WorkingAreaForPoint(reference);
 
         int badge = PositionCalculator.BadgeSizeForDpi(dpi, _settings.FontScale);
@@ -138,7 +171,73 @@ public sealed class TrayApplicationContext : ApplicationContext
             topLeft = PositionCalculator.ComputeTopLeft(anchor.ScreenRect, badgeSize, offsetPx, workArea);
         }
 
-        _overlay.ShowBadge(snapshot.Mode, snapshot.CapsLock, topLeft, badge, _settings.Opacity);
+        return new OverlayCommand(true, decision.Mode, decision.CapsLock, topLeft, badge, _settings.Opacity);
+    }
+
+    /// <summary>Marshal a command to the UI thread. Never blocks the worker.</summary>
+    private void PostToUi(OverlayCommand cmd)
+    {
+        try
+        {
+            if (_overlay.IsHandleCreated)
+            {
+                _overlay.BeginInvoke((Action)(() => ApplyOnUi(cmd)));
+            }
+        }
+        catch (Exception ex)
+        {
+            // Handle may be tearing down during shutdown; ignore.
+            _logger.Log("post " + ex.GetType().Name);
+        }
+    }
+
+    /// <summary>Apply a command. UI thread only - lightweight, never blocks.</summary>
+    private void ApplyOnUi(OverlayCommand cmd)
+    {
+        try
+        {
+            UpdateTrayIcon(cmd.Mode, cmd.CapsLock);
+
+            if (cmd.Show)
+            {
+                _overlay.ShowBadge(cmd.Mode, cmd.CapsLock, cmd.Location, cmd.BadgeSize, cmd.Opacity);
+            }
+            else
+            {
+                _overlay.HideBadge();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Log("apply " + ex.GetType().Name);
+        }
+    }
+
+    /// <summary>
+    /// DPI for the target monitor. Prefer GetDpiForWindow(foreground) - the
+    /// recommended call for a Per-Monitor-v2 process - and fall back to the
+    /// monitor under the reference point.
+    /// </summary>
+    private static uint GetForegroundDpi(Point reference)
+    {
+        try
+        {
+            IntPtr fg = NativeMethods.GetForegroundWindow();
+            if (fg != IntPtr.Zero)
+            {
+                uint d = NativeMethods.GetDpiForWindow(fg);
+                if (d > 0)
+                {
+                    return d;
+                }
+            }
+        }
+        catch
+        {
+            // GetDpiForWindow needs Win10 1607+; fall through.
+        }
+
+        return GetDpiForPoint(reference);
     }
 
     private static uint GetDpiForPoint(Point p)
@@ -272,7 +371,25 @@ public sealed class TrayApplicationContext : ApplicationContext
         var autoStart = new ToolStripMenuItem("Windows 시작 시 자동 실행") { CheckOnClick = true, Checked = AutoStartManager.IsEnabled() };
         autoStart.CheckedChanged += (_, _) =>
         {
-            AutoStartManager.SetEnabled(autoStart.Checked);
+            if (_suppressAutoStartEvent)
+            {
+                return;
+            }
+
+            bool ok = AutoStartManager.SetEnabled(autoStart.Checked);
+            if (!ok)
+            {
+                // Registry write failed (permissions / security software). Revert
+                // the checkbox so it never shows an untrue state, and tell the user.
+                _suppressAutoStartEvent = true;
+                autoStart.Checked = !autoStart.Checked;
+                _suppressAutoStartEvent = false;
+                _tray.ShowBalloonTip(4000, "HanEng Indicator",
+                    "자동 실행 설정을 변경하지 못했습니다. (권한 또는 보안 프로그램 차단)",
+                    ToolTipIcon.Warning);
+                return;
+            }
+
             _settings.AutoStart = autoStart.Checked;
             Persist();
         };
@@ -420,16 +537,28 @@ public sealed class TrayApplicationContext : ApplicationContext
     private void Persist()
     {
         _settings.Clamped();
-        _timer.Interval = _settings.PollingIntervalMs;
+        _intervalMs = _settings.PollingIntervalMs;
+        _wake.Set(); // apply the new interval promptly
         _settings.Save();
         // Refresh the menu so checkmarks reflect the new state next open.
         _tray.ContextMenuStrip = BuildMenu();
     }
 
+    private void StopWorker()
+    {
+        // Safe to call more than once (ExitApp then Dispose).
+        try { _cts.Cancel(); } catch { /* already disposed */ }
+        try { _wake.Set(); } catch { /* already disposed */ }
+        // The worker may be mid-way through a bounded IME/UIA call; give it a
+        // moment to unwind. It is a background thread, so even if this times out
+        // the process can still exit cleanly.
+        try { _worker.Join(2000); } catch { /* ignore */ }
+    }
+
     private void ExitApp()
     {
         _logger.Log("---- HanEngIndicator exiting ----");
-        _timer.Stop();
+        StopWorker();
         _tray.Visible = false;
         _overlay.HideBadge();
         ExitThread();
@@ -439,7 +568,9 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         if (disposing)
         {
-            _timer.Dispose();
+            StopWorker();
+            _cts.Dispose();
+            _wake.Dispose();
             _tray.Dispose();
             if (_trayIconHandle is not null)
             {
@@ -448,6 +579,7 @@ public sealed class TrayApplicationContext : ApplicationContext
                 NativeMethods.DestroyIcon(h);
             }
             _overlay.Dispose();
+            _logger.Dispose();
         }
 
         base.Dispose(disposing);

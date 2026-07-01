@@ -43,7 +43,9 @@ internal static class Program
     {
         try
         {
-            var logger = new DiagnosticLogger { Enabled = true };
+            // Dispose flushes the buffered write synchronously, which matters on
+            // the crash path where the process may be about to terminate.
+            using var logger = new DiagnosticLogger { Enabled = true };
             logger.Log(message);
         }
         catch

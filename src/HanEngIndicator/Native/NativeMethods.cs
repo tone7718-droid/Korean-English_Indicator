@@ -131,6 +131,13 @@ internal static class NativeMethods
     [DllImport("shcore.dll")]
     public static extern int GetDpiForMonitor(IntPtr hmonitor, MonitorDpiType dpiType, out uint dpiX, out uint dpiY);
 
+    /// <summary>
+    /// Preferred DPI query for a Per-Monitor-v2 process: returns the DPI of the
+    /// monitor hosting the given window. Available on Windows 10 1607+.
+    /// </summary>
+    [DllImport("user32.dll")]
+    public static extern uint GetDpiForWindow(IntPtr hwnd);
+
     // ---- Layered / click-through window styles ----------------------------
 
     public const int GWL_EXSTYLE = -20;

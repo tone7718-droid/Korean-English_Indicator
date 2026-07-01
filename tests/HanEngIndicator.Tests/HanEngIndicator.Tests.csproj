@@ -25,6 +25,8 @@
   <ItemGroup>
     <Compile Include="..\..\src\HanEngIndicator\Services\PositionCalculator.cs"
              Link="Production\PositionCalculator.cs" />
+    <Compile Include="..\..\src\HanEngIndicator\Services\OverlayPolicy.cs"
+             Link="Production\OverlayPolicy.cs" />
     <Compile Include="..\..\src\HanEngIndicator\Settings\AppSettings.cs"
              Link="Production\AppSettings.cs" />
     <Compile Include="..\..\src\HanEngIndicator\Models\InputState.cs"

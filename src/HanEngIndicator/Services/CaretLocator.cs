@@ -44,7 +44,7 @@ public sealed class CaretLocator
                 CaretAnchor caret = TryGuiThreadCaret(snapshot.ForegroundThreadId);
                 if (!caret.HasValue)
                 {
-                    caret = TryUiAutomationCaret();
+                    caret = ThrottledUiaCaret();
                 }
 
                 CaretAnchor result = caret.HasValue ? caret : MouseAnchor();
@@ -104,6 +104,35 @@ public sealed class CaretLocator
 
     // --- 2/3. UI Automation --------------------------------------------------
 
+    // UI Automation is comparatively expensive. Throttle it and reuse the last
+    // result between attempts so that, for apps without a standard caret (e.g. a
+    // custom chart control), we call UIA at most a few times per second instead
+    // of every polling cycle. (This runs on the background worker thread, so it
+    // never blocks the UI - the throttle is purely to keep the load light.)
+    private const int UiaThrottleMs = 400;
+    private CaretAnchor _lastUia = CaretAnchor.None;
+    private DateTime _lastUiaAtUtc = DateTime.MinValue;
+
+    private CaretAnchor ThrottledUiaCaret()
+    {
+        DateTime now = DateTime.UtcNow;
+        if ((now - _lastUiaAtUtc).TotalMilliseconds < UiaThrottleMs)
+        {
+            return _lastUia; // reuse cached anchor (may be None -> mouse fallback)
+        }
+
+        _lastUiaAtUtc = now;
+        _lastUia = TryUiAutomationCaret();
+        return _lastUia;
+    }
+
+    // Reject empty / zero-height / absurd rectangles so the badge never jumps to
+    // a bogus coordinate (e.g. a 0x0 selection rect reported at the origin).
+    private const int CoordLimit = 100_000;
+    private static bool SaneCoord(int v) => v is > -CoordLimit and < CoordLimit;
+    private static bool IsSaneCaretRect(Rectangle r) =>
+        r.Height > 0 && r.Width >= 0 && SaneCoord(r.X) && SaneCoord(r.Y);
+
     private CaretAnchor TryUiAutomationCaret()
     {
         try
@@ -119,7 +148,7 @@ public sealed class CaretLocator
                 && patternObj is TextPattern textPattern)
             {
                 Rectangle? textRect = FirstSelectionRectangle(textPattern);
-                if (textRect is { } tr && tr.Width >= 0 && tr.Height >= 0)
+                if (textRect is { } tr && IsSaneCaretRect(tr))
                 {
                     return new CaretAnchor(tr, CaretSource.UiAutomationText);
                 }
@@ -135,9 +164,12 @@ public sealed class CaretLocator
                     (int)Math.Round(bounds.Width),
                     (int)Math.Round(bounds.Height));
 
-                // Anchor to the lower-left so the badge does not cover the field.
-                var anchor = new Rectangle(rect.Left, rect.Bottom, 0, 0);
-                return new CaretAnchor(anchor, CaretSource.UiAutomationBoundingRect);
+                if (SaneCoord(rect.X) && SaneCoord(rect.Y))
+                {
+                    // Anchor to the lower-left so the badge does not cover the field.
+                    var anchor = new Rectangle(rect.Left, rect.Bottom, 0, 0);
+                    return new CaretAnchor(anchor, CaretSource.UiAutomationBoundingRect);
+                }
             }
         }
         catch
@@ -158,7 +190,7 @@ public sealed class CaretLocator
             {
                 TextPatternRange range = ranges[0];
                 System.Windows.Rect[] rects = range.GetBoundingRectangles();
-                if (rects.Length > 0)
+                if (rects.Length > 0 && rects[0].Height > 0)
                 {
                     System.Windows.Rect r = rects[0];
                     return new Rectangle(

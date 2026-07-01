@@ -99,15 +99,14 @@ public sealed class ImeDetector
         if (imeWnd != IntPtr.Zero)
         {
             bool gotMode = TrySendImeControl(imeWnd, NativeMethods.IMC_GETCONVERSIONMODE, out int conv);
-            bool gotOpen = TrySendImeControl(imeWnd, NativeMethods.IMC_GETOPENSTATUS, out int open);
             sentOk = gotMode;
 
             if (gotMode)
             {
-                // If open status is unavailable, assume open (Korean MS-IME is
-                // effectively always "open"; NATIVE bit carries the 가/A state).
-                bool open01 = !gotOpen || open != 0;
-                return new ConversionProbe(true, open01, conv);
+                // Korean MS-IME is effectively always "open"; the NATIVE bit
+                // carries the 가/A state. We deliberately skip the extra
+                // IMC_GETOPENSTATUS round-trip to halve the blocking cost.
+                return new ConversionProbe(true, true, conv);
             }
         }
 
@@ -166,7 +165,7 @@ public sealed class ImeDetector
             new IntPtr(command),
             IntPtr.Zero,
             NativeMethods.SMTO_ABORTIFHUNG,
-            120,
+            80,
             out IntPtr res);
 
         if (ret == IntPtr.Zero)
