@@ -44,7 +44,7 @@ public sealed class CaretLocator
                 CaretAnchor caret = TryGuiThreadCaret(snapshot.ForegroundThreadId);
                 if (!caret.HasValue && settings.UseUiAutomation)
                 {
-                    caret = ThrottledUiaCaret(snapshot.ForegroundThreadId);
+                    caret = ThrottledUiaCaret(NativeMethods.GetForegroundWindow());
                 }
 
                 CaretAnchor result = caret.HasValue ? caret : MouseAnchor();
@@ -104,65 +104,97 @@ public sealed class CaretLocator
 
     // --- 2/3. UI Automation --------------------------------------------------
 
-    // UI Automation is comparatively expensive. Throttle it and reuse the last
-    // result between attempts so that, for apps without a standard caret (e.g. a
-    // custom chart control), we call UIA at most a few times per second instead
-    // of every polling cycle. (This runs on the background worker thread, so it
-    // never blocks the UI - the throttle is purely to keep the load light.)
-    private const int UiaThrottleMs = 400;
-    private const int UiaSlowThresholdMs = 250;
+    // UI Automation is comparatively expensive AND can block indefinitely if a
+    // provider is unresponsive. So we run it on a background task with a BOUNDED
+    // wait, keep at most ONE call in flight (a stuck provider can never pile up
+    // threads or stall the detection worker), throttle attempts, cache the last
+    // result keyed by the foreground window, and gate it with a circuit breaker.
+    private const int UiaThrottleMs = 400;  // minimum gap between UIA attempts
+    private const int UiaWaitMs = 180;      // max time the worker waits for UIA
     private const int UiaSlowStreakLimit = 3;
     private static readonly TimeSpan UiaCooldown = TimeSpan.FromSeconds(30);
 
+    private readonly UiaCircuitBreaker _uiaBreaker = new(UiaSlowStreakLimit, UiaCooldown);
     private CaretAnchor _lastUia = CaretAnchor.None;
     private DateTime _lastUiaAtUtc = DateTime.MinValue;
-    private uint _lastUiaThreadId;
-    private int _uiaSlowStreak;
-    private DateTime _uiaDisabledUntilUtc = DateTime.MinValue;
+    private IntPtr _lastUiaHwnd;
+    private Task<CaretAnchor>? _uiaInFlight;
+    private IntPtr _inFlightHwnd;
 
-    private CaretAnchor ThrottledUiaCaret(uint foregroundThreadId)
+    private CaretAnchor ThrottledUiaCaret(IntPtr foregroundWindow)
     {
         DateTime now = DateTime.UtcNow;
 
-        // Circuit breaker: if the UIA provider has been slow repeatedly, stop
-        // calling it for a while and fall back to the mouse.
-        if (now < _uiaDisabledUntilUtc)
+        // Circuit breaker: skip UIA entirely during a cooldown.
+        if (_uiaBreaker.IsOpen(now))
         {
             return CaretAnchor.None;
         }
 
-        // Invalidate the cache immediately when the foreground window changes,
-        // so we never reuse a previous window's caret coordinates.
-        if (foregroundThreadId != _lastUiaThreadId)
+        // Invalidate the cache immediately when the foreground WINDOW changes
+        // (not just the thread), so we never reuse another window's - or another
+        // control's within the same thread - caret coordinates.
+        if (foregroundWindow != _lastUiaHwnd)
         {
-            _lastUiaThreadId = foregroundThreadId;
+            _lastUiaHwnd = foregroundWindow;
             _lastUia = CaretAnchor.None;
             _lastUiaAtUtc = DateTime.MinValue;
         }
-        else if ((now - _lastUiaAtUtc).TotalMilliseconds < UiaThrottleMs)
+
+        // Harvest a previously-started call if it has since completed. Discard a
+        // late result if the foreground window changed while it ran (stale).
+        if (_uiaInFlight is { IsCompleted: true } finished)
         {
-            return _lastUia; // reuse cached anchor (may be None -> mouse fallback)
+            _lastUia = (finished.Status == TaskStatus.RanToCompletion && _inFlightHwnd == foregroundWindow)
+                ? finished.Result
+                : CaretAnchor.None;
+            _lastUiaAtUtc = now;
+            _uiaInFlight = null;
+        }
+        else if (_uiaInFlight is not null)
+        {
+            // A previous call is still running (unresponsive provider). Do NOT
+            // start another - reuse the cache and let the caller fall back.
+            return _lastUia;
         }
 
+        // Throttle: within the window, reuse the cached anchor.
+        if ((now - _lastUiaAtUtc).TotalMilliseconds < UiaThrottleMs)
+        {
+            return _lastUia;
+        }
+
+        // Start a bounded UIA call on a background task.
         _lastUiaAtUtc = now;
+        _inFlightHwnd = foregroundWindow;
+        Task<CaretAnchor> task = Task.Run(TryUiAutomationCaret);
 
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        _lastUia = TryUiAutomationCaret();
-        sw.Stop();
-
-        if (sw.ElapsedMilliseconds > UiaSlowThresholdMs)
+        bool completed;
+        try
         {
-            if (++_uiaSlowStreak >= UiaSlowStreakLimit)
-            {
-                _uiaDisabledUntilUtc = now + UiaCooldown;
-                _uiaSlowStreak = 0;
-                _logger.Log(string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                    $"UIA disabled for {UiaCooldown.TotalSeconds}s (slow provider)"));
-            }
+            completed = task.Wait(UiaWaitMs);
         }
-        else
+        catch
         {
-            _uiaSlowStreak = 0;
+            completed = true; // faulted within the wait; treat as no result
+        }
+
+        if (completed)
+        {
+            _uiaInFlight = null;
+            _lastUia = task.Status == TaskStatus.RanToCompletion ? task.Result : CaretAnchor.None;
+            _uiaBreaker.Record(healthy: true, now);
+            return _lastUia;
+        }
+
+        // Timed out: keep the task tracked so we never start a second one, mark
+        // the attempt unhealthy (cooldown measured from NOW, not the call start),
+        // and fall back to the mouse.
+        _uiaInFlight = task;
+        _uiaBreaker.Record(healthy: false, DateTime.UtcNow);
+        if (_logger.Enabled)
+        {
+            _logger.Log("UIA call exceeded budget; using mouse fallback this cycle.");
         }
 
         return _lastUia;

@@ -23,6 +23,12 @@ public sealed class ImeDetector
 {
     private readonly DiagnosticLogger _logger;
 
+    // Caps Lock read throttle (worker thread only). ~300ms keeps A/a responsive
+    // while avoiding an AttachThreadInput on every 120ms cycle.
+    private const int CapsPollMs = 300;
+    private bool _lastCaps;
+    private DateTime _lastCapsAtUtc = DateTime.MinValue;
+
     public ImeDetector(DiagnosticLogger logger)
     {
         _logger = logger;
@@ -74,8 +80,21 @@ public sealed class ImeDetector
         }
 
         // Only meaningful for English input: Caps Lock decides A (upper) vs a (lower).
-        // Read via the foreground thread's input state (see NativeMethods).
-        bool capsLock = mode == InputMode.English && NativeMethods.IsCapsLockOn(threadId);
+        // Reading it requires briefly attaching to the foreground thread's input
+        // (see NativeMethods), which we throttle: Caps Lock changes rarely, so we
+        // re-read at most every CapsPollMs and reuse the cached value otherwise.
+        bool capsLock = false;
+        if (mode == InputMode.English)
+        {
+            DateTime nowCaps = DateTime.UtcNow;
+            if ((nowCaps - _lastCapsAtUtc).TotalMilliseconds >= CapsPollMs)
+            {
+                _lastCaps = NativeMethods.IsCapsLockOn(threadId, foreground);
+                _lastCapsAtUtc = nowCaps;
+            }
+
+            capsLock = _lastCaps;
+        }
 
         var snapshot = new InputStateSnapshot(
             mode, koreanLayout, imeOpen, layoutId, className, threadId, capsLock);

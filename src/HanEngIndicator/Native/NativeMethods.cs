@@ -33,6 +33,10 @@ internal static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
 
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsHungAppWindow(IntPtr hwnd);
+
     /// <summary>Virtual key code for Caps Lock.</summary>
     public const int VK_CAPITAL = 0x14;
 
@@ -43,15 +47,22 @@ internal static class NativeMethods
     /// is stale on our background worker (it pumps no keyboard messages). To read
     /// the real toggle we briefly attach to the foreground thread's input queue -
     /// per Microsoft, "threads connected through AttachThreadInput share the same
-    /// keyboard state" - then detach immediately. If attaching fails (different
-    /// integrity/desktop), we fall back to a best-effort direct read.
+    /// keyboard state" - then detach immediately.
+    ///
+    /// We do NOT attach when the foreground window is not responding (attaching
+    /// synchronizes input queues and could block on a hung app), when there is no
+    /// distinct foreground thread, or when attach fails (different integrity /
+    /// desktop). In those cases we return a best-effort direct read. Callers
+    /// should also throttle how often they call this to avoid churn.
     /// </summary>
-    public static bool IsCapsLockOn(uint foregroundThreadId)
+    public static bool IsCapsLockOn(uint foregroundThreadId, IntPtr foregroundWindow)
     {
         uint self = GetCurrentThreadId();
-        bool attached = foregroundThreadId != 0
+        bool safeToAttach = foregroundThreadId != 0
             && foregroundThreadId != self
-            && AttachThreadInput(self, foregroundThreadId, true);
+            && (foregroundWindow == IntPtr.Zero || !IsHungAppWindow(foregroundWindow));
+
+        bool attached = safeToAttach && AttachThreadInput(self, foregroundThreadId, true);
         try
         {
             return (GetKeyState(VK_CAPITAL) & 0x0001) != 0;

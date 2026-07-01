@@ -27,6 +27,8 @@
              Link="Production\PositionCalculator.cs" />
     <Compile Include="..\..\src\HanEngIndicator\Services\OverlayPolicy.cs"
              Link="Production\OverlayPolicy.cs" />
+    <Compile Include="..\..\src\HanEngIndicator\Services\UiaCircuitBreaker.cs"
+             Link="Production\UiaCircuitBreaker.cs" />
     <Compile Include="..\..\src\HanEngIndicator\Settings\AppSettings.cs"
              Link="Production\AppSettings.cs" />
     <Compile Include="..\..\src\HanEngIndicator\Models\InputState.cs"

@@ -151,11 +151,13 @@ dist\HanEngIndicator-win-x64-folder.zip      # 폴더형(자기추출 안 함) +
 dist\SHA256SUMS.txt                          # 무결성 해시
 ```
 
-> **참고(크로스 빌드):** 이 프로젝트는 Windows에서는 표준 `UseWindowsForms`
-> 방식으로 빌드되고, Windows가 아닌 호스트(예: Linux CI)에서는
-> `EnableWindowsTargeting` + `Microsoft.WindowsDesktop.App` FrameworkReference로
-> 동일한 win-x64 EXE를 교차 컴파일합니다. `csproj`에 두 경로가 모두 들어 있어
-> 별도 설정 없이 어느 쪽에서도 빌드됩니다.
+> **참고(크로스 빌드):** 이 프로젝트는 **Windows·Linux 모두 동일한 방식**으로
+> 빌드됩니다. `UseWindowsForms` 대신 `Microsoft.WindowsDesktop.App`
+> FrameworkReference를 직접 참조하고(WinForms·WPF·UI Automation 모두 포함),
+> `EnableWindowsTargeting`으로 비Windows 호스트에서도 win-x64 EXE를 교차
+> 컴파일합니다. 따라서 Windows 개발 PC와 Linux CI 러너에서 `csproj` 분기 없이
+> 똑같이 빌드됩니다. (이전의 OS별 `UseWindowsForms` 분기는 Windows에서 UI
+> Automation 참조가 해석되지 않아 제거했습니다.)
 
 ---
 
