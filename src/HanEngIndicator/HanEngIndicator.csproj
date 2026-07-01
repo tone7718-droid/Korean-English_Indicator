@@ -19,7 +19,7 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
-    <!-- MSB3243: harmless ref duplication during the Linux cross-build path. -->
+    <!-- MSB3243: harmless ref duplication when resolving desktop assemblies. -->
     <NoWarn>$(NoWarn);MSB3243</NoWarn>
 
     <!-- Single-file, self-contained publish defaults. Because the UI Automation
@@ -30,38 +30,32 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <PublishTrimmed>false</PublishTrimmed>
     <DebugType>embedded</DebugType>
-  </PropertyGroup>
 
-  <!-- UI Automation, used as a caret-location fallback for non-Win32 controls. -->
-  <ItemGroup>
-    <Reference Include="UIAutomationClient" />
-    <Reference Include="UIAutomationTypes" />
-  </ItemGroup>
+    <!--
+      Unified WinForms + UI Automation setup that builds identically on Windows
+      and on a non-Windows CI runner.
 
-  <!--
-    On a real Windows developer machine the official .NET SDK ships the
-    "Microsoft.NET.Sdk.WindowsDesktop" MSBuild SDK, so we just turn on the
-    standard, idiomatic WinForms support.
-  -->
-  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
-    <UseWindowsForms>true</UseWindowsForms>
-  </PropertyGroup>
+      We deliberately do NOT use <UseWindowsForms>true</UseWindowsForms>: that
+      Windows-only path pulls in the WinForms-only reference set, which does not
+      make UIAutomationClient/UIAutomationTypes resolvable (they live in the WPF
+      part of Microsoft.WindowsDesktop.App). Instead we reference the whole
+      WindowsDesktop framework directly, which exposes WinForms, WPF and UI
+      Automation, and works the same on every host.
 
-  <!--
-    On non-Windows hosts (e.g. a Linux CI runner) the WindowsDesktop MSBuild
-    SDK is not present. We can still cross-compile and publish a win-x64
-    WinForms binary by enabling Windows targeting, skipping the missing
-    WindowsDesktop targets import, and pulling the desktop reference/runtime
-    packs in directly via a FrameworkReference.
-  -->
-  <PropertyGroup Condition="!$([MSBuild]::IsOSPlatform('Windows'))">
+      EnableWindowsTargeting lets a non-Windows host build a Windows target;
+      it is a no-op on Windows. ImportWindowsDesktopTargets=false skips the
+      WinForms/WPF designer targets we do not need.
+    -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <ImportWindowsDesktopTargets>false</ImportWindowsDesktopTargets>
   </PropertyGroup>
-  <ItemGroup Condition="!$([MSBuild]::IsOSPlatform('Windows'))">
+
+  <ItemGroup>
     <FrameworkReference Include="Microsoft.WindowsDesktop.App" />
-    <!-- UseWindowsForms (Windows-only path) normally injects these; add them
-         explicitly for the cross-build so the same source compiles. -->
+    <!-- UI Automation caret fallback for non-Win32 controls. -->
+    <Reference Include="UIAutomationClient" />
+    <Reference Include="UIAutomationTypes" />
+    <!-- Global usings that UseWindowsForms would normally inject. -->
     <Using Include="System.Windows.Forms" />
     <Using Include="System.Drawing" />
   </ItemGroup>
