@@ -102,6 +102,16 @@ public sealed class OverlayForm : Form
             Show();
         }
 
+        // Re-assert top-most on every update (without activating). Other
+        // top-most windows - e.g. dialogs/popups from the chart program - can
+        // otherwise end up drawn above the badge, making it seem to disappear.
+        if (IsHandleCreated)
+        {
+            NativeMethods.SetWindowPos(
+                Handle, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
+                NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
+        }
+
         Invalidate();
     }
 

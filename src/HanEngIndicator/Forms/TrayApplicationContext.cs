@@ -36,9 +36,10 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             Text = "HanEng Indicator (한/영 표시기)",
             Visible = true,
-            Icon = BuildTrayIcon(InputMode.Korean, "가"),
             ContextMenuStrip = BuildMenu(),
         };
+        SetTrayIcon(BuildTrayIcon(InputMode.Korean, "가"));
+        _lastTrayGlyph = "가";
         _tray.DoubleClick += (_, _) => ToggleEnabled();
 
         _timer = new Timer { Interval = _settings.PollingIntervalMs };
@@ -51,6 +52,8 @@ public sealed class TrayApplicationContext : ApplicationContext
     // ----- main loop --------------------------------------------------------
 
     private string _lastTrayGlyph = string.Empty;
+    private InputStateSnapshot _lastGood = InputStateSnapshot.Unknown;
+    private DateTime _lastGoodAtUtc = DateTime.MinValue;
 
     private void OnTick(object? sender, EventArgs e)
     {
@@ -63,6 +66,27 @@ public sealed class TrayApplicationContext : ApplicationContext
             }
 
             InputStateSnapshot snapshot = _detector.Detect();
+
+            // Hysteresis: a single transient Unknown (foreground momentarily
+            // null during a window/dialog switch, or an IME query that timed
+            // out because the target was briefly busy) must NOT blink the badge
+            // off. Keep showing the last known good state for a short grace
+            // period; only hide if the gap persists.
+            if (snapshot.Mode == InputMode.Unknown)
+            {
+                int graceMs = Math.Max(800, _settings.PollingIntervalMs * 6);
+                if (_lastGood.Mode != InputMode.Unknown &&
+                    (DateTime.UtcNow - _lastGoodAtUtc).TotalMilliseconds <= graceMs)
+                {
+                    snapshot = _lastGood;
+                }
+            }
+            else
+            {
+                _lastGood = snapshot;
+                _lastGoodAtUtc = DateTime.UtcNow;
+            }
+
             UpdateTrayIcon(snapshot.Mode, snapshot.CapsLock);
 
             bool show = snapshot.Mode switch
@@ -166,10 +190,27 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
 
         _lastTrayGlyph = glyph;
-        Icon newIcon = BuildTrayIcon(mode, glyph);
+        SetTrayIcon(BuildTrayIcon(mode, glyph));
+    }
+
+    /// <summary>
+    /// Swap the tray icon and fully release the previous one. Icon.FromHandle
+    /// does NOT own the HICON produced by Bitmap.GetHicon(), so we must destroy
+    /// it explicitly - otherwise every glyph change leaks a GDI handle and, over
+    /// a long session, rendering can eventually fail.
+    /// </summary>
+    private void SetTrayIcon(Icon newIcon)
+    {
+        Icon? old = _trayIconHandle;
         _tray.Icon = newIcon;
-        _trayIconHandle?.Dispose();
         _trayIconHandle = newIcon;
+
+        if (old is not null)
+        {
+            IntPtr oldHandle = old.Handle;
+            old.Dispose();
+            NativeMethods.DestroyIcon(oldHandle);
+        }
     }
 
     private static Icon BuildTrayIcon(InputMode mode, string glyph)
@@ -400,7 +441,12 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             _timer.Dispose();
             _tray.Dispose();
-            _trayIconHandle?.Dispose();
+            if (_trayIconHandle is not null)
+            {
+                IntPtr h = _trayIconHandle.Handle;
+                _trayIconHandle.Dispose();
+                NativeMethods.DestroyIcon(h);
+            }
             _overlay.Dispose();
         }
 
