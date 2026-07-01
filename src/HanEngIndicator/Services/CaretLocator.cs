@@ -154,8 +154,14 @@ public sealed class CaretLocator
         else if (_uiaInFlight is not null)
         {
             // A previous call is still running (unresponsive provider). Do NOT
-            // start another - reuse the cache and let the caller fall back.
-            return _lastUia;
+            // start another. Crucially, do NOT keep returning the last UIA
+            // coordinate - that would pin the badge to a stale spot for as long
+            // as the provider stays stuck. Return None so the caller falls back
+            // to the mouse, and count this stuck cycle as unhealthy so the
+            // breaker actually opens on a persistent hang (the first timeout
+            // alone is not enough, since we early-return here every cycle after).
+            _uiaBreaker.Record(healthy: false, now);
+            return CaretAnchor.None;
         }
 
         // Throttle: within the window, reuse the cached anchor.
@@ -189,7 +195,9 @@ public sealed class CaretLocator
 
         // Timed out: keep the task tracked so we never start a second one, mark
         // the attempt unhealthy (cooldown measured from NOW, not the call start),
-        // and fall back to the mouse.
+        // and fall back to the mouse. Return None (NOT the last UIA coordinate) so
+        // this cycle is a real mouse fallback - the badge must never stay frozen
+        // on a stale caret while UIA is stuck.
         _uiaInFlight = task;
         _uiaBreaker.Record(healthy: false, DateTime.UtcNow);
         if (_logger.Enabled)
@@ -197,7 +205,7 @@ public sealed class CaretLocator
             _logger.Log("UIA call exceeded budget; using mouse fallback this cycle.");
         }
 
-        return _lastUia;
+        return CaretAnchor.None;
     }
 
     // Reject empty / zero-height / absurd rectangles so the badge never jumps to
