@@ -64,6 +64,15 @@ public sealed class AppSettings
     /// <summary>Polling interval in milliseconds (50 - 500).</summary>
     public int PollingIntervalMs { get; set; } = 120;
 
+    /// <summary>
+    /// Use UI Automation to find the caret in controls that do not expose a
+    /// standard Win32 caret (browsers, some custom chart controls). If a
+    /// program's UIA provider is slow/unresponsive this can be turned off to
+    /// fall back to the mouse pointer. A per-session circuit breaker also
+    /// disables it automatically if it is repeatedly slow.
+    /// </summary>
+    public bool UseUiAutomation { get; set; } = true;
+
     /// <summary>Start automatically when Windows starts (HKCU Run key).</summary>
     public bool AutoStart { get; set; } = false;
 

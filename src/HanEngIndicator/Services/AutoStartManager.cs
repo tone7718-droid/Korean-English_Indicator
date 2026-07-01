@@ -11,12 +11,23 @@ public static class AutoStartManager
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string ValueName = "HanEngIndicator";
 
+    /// <summary>
+    /// True only if the Run key points at THIS executable. If the app was moved
+    /// to a different folder, the stale entry is treated as "not enabled" so the
+    /// user is prompted to re-register at the new path.
+    /// </summary>
     public static bool IsEnabled()
     {
         try
         {
             using RegistryKey? key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: false);
-            return key?.GetValue(ValueName) is string;
+            if (key?.GetValue(ValueName) is not string stored)
+            {
+                return false;
+            }
+
+            return string.Equals(Normalize(stored), Normalize(CurrentCommand()),
+                StringComparison.OrdinalIgnoreCase);
         }
         catch
         {
@@ -31,8 +42,7 @@ public static class AutoStartManager
             using RegistryKey key = Registry.CurrentUser.CreateSubKey(RunKeyPath, writable: true);
             if (enabled)
             {
-                string exe = Environment.ProcessPath ?? Application.ExecutablePath;
-                key.SetValue(ValueName, $"\"{exe}\"");
+                key.SetValue(ValueName, CurrentCommand());
             }
             else if (key.GetValue(ValueName) is not null)
             {
@@ -44,6 +54,25 @@ public static class AutoStartManager
         catch
         {
             return false;
+        }
+    }
+
+    private static string CurrentCommand()
+    {
+        string exe = Environment.ProcessPath ?? Application.ExecutablePath;
+        return $"\"{exe}\"";
+    }
+
+    private static string Normalize(string command)
+    {
+        string s = command.Trim().Trim('"');
+        try
+        {
+            return Path.GetFullPath(s);
+        }
+        catch
+        {
+            return s;
         }
     }
 }

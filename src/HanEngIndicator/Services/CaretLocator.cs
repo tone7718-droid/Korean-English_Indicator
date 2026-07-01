@@ -42,9 +42,9 @@ public sealed class CaretLocator
             case PositionMode.CaretThenMouse:
             default:
                 CaretAnchor caret = TryGuiThreadCaret(snapshot.ForegroundThreadId);
-                if (!caret.HasValue)
+                if (!caret.HasValue && settings.UseUiAutomation)
                 {
-                    caret = ThrottledUiaCaret();
+                    caret = ThrottledUiaCaret(snapshot.ForegroundThreadId);
                 }
 
                 CaretAnchor result = caret.HasValue ? caret : MouseAnchor();
@@ -110,19 +110,61 @@ public sealed class CaretLocator
     // of every polling cycle. (This runs on the background worker thread, so it
     // never blocks the UI - the throttle is purely to keep the load light.)
     private const int UiaThrottleMs = 400;
+    private const int UiaSlowThresholdMs = 250;
+    private const int UiaSlowStreakLimit = 3;
+    private static readonly TimeSpan UiaCooldown = TimeSpan.FromSeconds(30);
+
     private CaretAnchor _lastUia = CaretAnchor.None;
     private DateTime _lastUiaAtUtc = DateTime.MinValue;
+    private uint _lastUiaThreadId;
+    private int _uiaSlowStreak;
+    private DateTime _uiaDisabledUntilUtc = DateTime.MinValue;
 
-    private CaretAnchor ThrottledUiaCaret()
+    private CaretAnchor ThrottledUiaCaret(uint foregroundThreadId)
     {
         DateTime now = DateTime.UtcNow;
-        if ((now - _lastUiaAtUtc).TotalMilliseconds < UiaThrottleMs)
+
+        // Circuit breaker: if the UIA provider has been slow repeatedly, stop
+        // calling it for a while and fall back to the mouse.
+        if (now < _uiaDisabledUntilUtc)
+        {
+            return CaretAnchor.None;
+        }
+
+        // Invalidate the cache immediately when the foreground window changes,
+        // so we never reuse a previous window's caret coordinates.
+        if (foregroundThreadId != _lastUiaThreadId)
+        {
+            _lastUiaThreadId = foregroundThreadId;
+            _lastUia = CaretAnchor.None;
+            _lastUiaAtUtc = DateTime.MinValue;
+        }
+        else if ((now - _lastUiaAtUtc).TotalMilliseconds < UiaThrottleMs)
         {
             return _lastUia; // reuse cached anchor (may be None -> mouse fallback)
         }
 
         _lastUiaAtUtc = now;
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         _lastUia = TryUiAutomationCaret();
+        sw.Stop();
+
+        if (sw.ElapsedMilliseconds > UiaSlowThresholdMs)
+        {
+            if (++_uiaSlowStreak >= UiaSlowStreakLimit)
+            {
+                _uiaDisabledUntilUtc = now + UiaCooldown;
+                _uiaSlowStreak = 0;
+                _logger.Log(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                    $"UIA disabled for {UiaCooldown.TotalSeconds}s (slow provider)"));
+            }
+        }
+        else
+        {
+            _uiaSlowStreak = 0;
+        }
+
         return _lastUia;
     }
 

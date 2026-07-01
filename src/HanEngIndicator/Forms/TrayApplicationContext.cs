@@ -25,8 +25,8 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     // Background polling worker + coordination.
     private readonly Thread _worker;
-    private readonly CancellationTokenSource _cts = new();
     private readonly ManualResetEventSlim _wake = new(false);
+    private volatile bool _stopping;
     private volatile int _intervalMs;
 
     public TrayApplicationContext()
@@ -86,23 +86,40 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     private void WorkerLoop()
     {
-        while (!_cts.IsCancellationRequested)
+        // The whole loop is guarded so that nothing (including a disposed wait
+        // handle during shutdown) can raise an unhandled exception on this
+        // background thread and tear the process down.
+        try
         {
-            try
+            while (!_stopping)
             {
-                RunOneCycle();
-            }
-            catch (Exception ex)
-            {
-                _logger.Log("worker " + ex.GetType().Name);
-            }
+                try
+                {
+                    RunOneCycle();
+                }
+                catch (Exception ex)
+                {
+                    _logger.Log("worker " + ex.GetType().Name);
+                }
 
-            // Sleep until the next cycle, waking early if settings changed or we
-            // are shutting down.
-            if (_wake.Wait(Math.Max(30, _intervalMs)))
-            {
-                _wake.Reset();
+                // Sleep until the next cycle, waking early if settings changed
+                // or we are shutting down.
+                try
+                {
+                    if (_wake.Wait(Math.Max(30, _intervalMs)))
+                    {
+                        _wake.Reset();
+                    }
+                }
+                catch (ObjectDisposedException)
+                {
+                    break; // shutting down
+                }
             }
+        }
+        catch
+        {
+            // Last-resort guard - never crash the process from the worker.
         }
     }
 
@@ -153,7 +170,17 @@ public sealed class TrayApplicationContext : ApplicationContext
             ? new Point(anchor.ScreenRect.Right, anchor.ScreenRect.Bottom)
             : Control.MousePosition;
 
-        uint dpi = GetForegroundDpi(reference);
+        // DPI source depends on what we anchored to. For a real caret, the target
+        // is on the foreground window's monitor -> use GetDpiForWindow(foreground).
+        // For the mouse/corner, the reference point may be on a DIFFERENT monitor
+        // than the foreground window, so use the DPI of the monitor under the
+        // reference point instead.
+        bool caretBased = anchor.Source
+            is CaretSource.GuiThreadInfoCaret
+            or CaretSource.UiAutomationText
+            or CaretSource.UiAutomationBoundingRect;
+
+        uint dpi = caretBased ? GetForegroundDpi(reference) : GetDpiForPoint(reference);
         Rectangle workArea = WorkingAreaForPoint(reference);
 
         int badge = PositionCalculator.BadgeSizeForDpi(dpi, _settings.FontScale);
@@ -394,6 +421,13 @@ public sealed class TrayApplicationContext : ApplicationContext
             Persist();
         };
 
+        var uia = new ToolStripMenuItem("정밀 캐럿 위치(UI Automation) 사용")
+        {
+            CheckOnClick = true,
+            Checked = _settings.UseUiAutomation,
+        };
+        uia.CheckedChanged += (_, _) => { _settings.UseUiAutomation = uia.Checked; Persist(); };
+
         var diag = new ToolStripMenuItem("진단 로그 기록") { CheckOnClick = true, Checked = _settings.DiagnosticLogging };
         diag.CheckedChanged += (_, _) =>
         {
@@ -419,7 +453,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             new ToolStripSeparator(),
             sizeMenu, opacityMenu, offsetMenu,
             new ToolStripSeparator(),
-            autoStart, diag, openFolder,
+            autoStart, uia, diag, openFolder,
             new ToolStripSeparator(),
             exit,
         });
@@ -540,19 +574,23 @@ public sealed class TrayApplicationContext : ApplicationContext
         _intervalMs = _settings.PollingIntervalMs;
         _wake.Set(); // apply the new interval promptly
         _settings.Save();
-        // Refresh the menu so checkmarks reflect the new state next open.
+        // Refresh the menu so checkmarks reflect the new state next open, and
+        // dispose the previous menu instead of leaving it for the GC.
+        ContextMenuStrip? old = _tray.ContextMenuStrip;
         _tray.ContextMenuStrip = BuildMenu();
+        old?.Dispose();
     }
 
-    private void StopWorker()
+    /// <summary>Signal the worker to stop; returns true if it fully joined.</summary>
+    private bool StopWorker()
     {
         // Safe to call more than once (ExitApp then Dispose).
-        try { _cts.Cancel(); } catch { /* already disposed */ }
+        _stopping = true;
         try { _wake.Set(); } catch { /* already disposed */ }
-        // The worker may be mid-way through a bounded IME/UIA call; give it a
-        // moment to unwind. It is a background thread, so even if this times out
-        // the process can still exit cleanly.
-        try { _worker.Join(2000); } catch { /* ignore */ }
+        // The worker may be mid-way through a bounded IME/UIA/attach call; give
+        // it a moment to unwind. It is a background thread, so even if this times
+        // out the process can still exit cleanly.
+        try { return _worker.Join(2000); } catch { return false; }
     }
 
     private void ExitApp()
@@ -568,9 +606,16 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         if (disposing)
         {
-            StopWorker();
-            _cts.Dispose();
-            _wake.Dispose();
+            // Only dispose the wait handle if the worker actually stopped; if it
+            // is still stuck in a slow provider call, leave the handle alone (the
+            // process is exiting anyway) so the worker can never touch a disposed
+            // object.
+            bool joined = StopWorker();
+            if (joined)
+            {
+                _wake.Dispose();
+            }
+
             _tray.Dispose();
             if (_trayIconHandle is not null)
             {

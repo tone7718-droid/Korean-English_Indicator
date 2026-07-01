@@ -55,10 +55,17 @@ public sealed class DiagnosticLogger : IDisposable
             return;
         }
 
-        // Enqueue is cheap and non-blocking; the writer thread does the I/O.
-        _queue.Enqueue(string.Create(CultureInfo.InvariantCulture,
-            $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}  {message}"));
-        _signal.Set();
+        try
+        {
+            // Enqueue is cheap and non-blocking; the writer thread does the I/O.
+            _queue.Enqueue(string.Create(CultureInfo.InvariantCulture,
+                $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}  {message}"));
+            _signal.Set();
+        }
+        catch (ObjectDisposedException)
+        {
+            // A late log from the worker during shutdown; safe to drop.
+        }
     }
 
     private void WriterLoop()

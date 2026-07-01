@@ -26,11 +26,44 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern short GetKeyState(int nVirtKey);
 
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
     /// <summary>Virtual key code for Caps Lock.</summary>
     public const int VK_CAPITAL = 0x14;
 
-    /// <summary>True when Caps Lock is toggled on (low-order bit of GetKeyState).</summary>
-    public static bool IsCapsLockOn() => (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
+    /// <summary>
+    /// True when Caps Lock is toggled on.
+    ///
+    /// GetKeyState reflects the CALLING thread's message-queue key state, which
+    /// is stale on our background worker (it pumps no keyboard messages). To read
+    /// the real toggle we briefly attach to the foreground thread's input queue -
+    /// per Microsoft, "threads connected through AttachThreadInput share the same
+    /// keyboard state" - then detach immediately. If attaching fails (different
+    /// integrity/desktop), we fall back to a best-effort direct read.
+    /// </summary>
+    public static bool IsCapsLockOn(uint foregroundThreadId)
+    {
+        uint self = GetCurrentThreadId();
+        bool attached = foregroundThreadId != 0
+            && foregroundThreadId != self
+            && AttachThreadInput(self, foregroundThreadId, true);
+        try
+        {
+            return (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
+        }
+        finally
+        {
+            if (attached)
+            {
+                AttachThreadInput(self, foregroundThreadId, false);
+            }
+        }
+    }
 
     // ---- IME (IMM32) -------------------------------------------------------
 

@@ -39,6 +39,12 @@ $extras = @(
     (Join-Path $root "Uninstall-AutoStartAdmin.cmd")
 )
 
+# These are required parts of the release; fail fast if any is missing rather
+# than silently shipping an incomplete package.
+foreach ($f in $extras) {
+    if (-not (Test-Path $f)) { throw "Required release file is missing: $f" }
+}
+
 foreach ($d in @($singleDir, $folderDir, $dist)) {
     if (Test-Path $d) { Remove-Item $d -Recurse -Force }
     New-Item -ItemType Directory -Path $d -Force | Out-Null
