@@ -41,21 +41,22 @@ internal static class NativeMethods
     public const int VK_CAPITAL = 0x14;
 
     /// <summary>
-    /// True when Caps Lock is toggled on.
+    /// Reads the Caps Lock toggle. Returns the value, and sets
+    /// <paramref name="confident"/> to true only when we were able to attach to
+    /// the foreground thread's input queue for the read.
     ///
-    /// GetKeyState reflects the CALLING thread's message-queue key state, which
-    /// is stale on our background worker (it pumps no keyboard messages). To read
-    /// the real toggle we briefly attach to the foreground thread's input queue -
-    /// per Microsoft, "threads connected through AttachThreadInput share the same
-    /// keyboard state" - then detach immediately.
-    ///
-    /// We do NOT attach when the foreground window is not responding (attaching
-    /// synchronizes input queues and could block on a hung app), when there is no
-    /// distinct foreground thread, or when attach fails (different integrity /
-    /// desktop). In those cases we return a best-effort direct read. Callers
-    /// should also throttle how often they call this to avoid churn.
+    /// Why confidence matters: GetKeyState reflects the CALLING thread's
+    /// message-queue key state, which is stale on our background worker (it pumps
+    /// no keyboard messages). Attaching to the foreground thread makes the two
+    /// share keyboard state (GetKeyboardState remarks). BUT AttachThreadInput's
+    /// own remarks warn that key state is *reset* after the call, so a read is
+    /// only trustworthy when the attach actually happened - and even then it
+    /// should be verified on real hardware. When we cannot attach (foreground
+    /// window not responding, no distinct foreground thread, or attach fails
+    /// across integrity/desktop) the direct read is best-effort only and the
+    /// caller should keep its previous value rather than trust it.
     /// </summary>
-    public static bool IsCapsLockOn(uint foregroundThreadId, IntPtr foregroundWindow)
+    public static bool ReadCapsLock(uint foregroundThreadId, IntPtr foregroundWindow, out bool confident)
     {
         uint self = GetCurrentThreadId();
         bool safeToAttach = foregroundThreadId != 0
@@ -65,6 +66,7 @@ internal static class NativeMethods
         bool attached = safeToAttach && AttachThreadInput(self, foregroundThreadId, true);
         try
         {
+            confident = attached;
             return (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
         }
         finally

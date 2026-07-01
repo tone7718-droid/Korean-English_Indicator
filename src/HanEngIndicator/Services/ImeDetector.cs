@@ -89,8 +89,17 @@ public sealed class ImeDetector
             DateTime nowCaps = DateTime.UtcNow;
             if ((nowCaps - _lastCapsAtUtc).TotalMilliseconds >= CapsPollMs)
             {
-                _lastCaps = NativeMethods.IsCapsLockOn(threadId, foreground);
-                _lastCapsAtUtc = nowCaps;
+                bool reading = NativeMethods.ReadCapsLock(threadId, foreground, out bool confident);
+
+                // Only adopt a CONFIDENT read (we actually attached to the
+                // foreground input). A non-confident read may be reset/stale, so
+                // keep the last known value rather than risk showing a wrong 'a'.
+                if (confident)
+                {
+                    _lastCaps = reading;
+                }
+
+                _lastCapsAtUtc = nowCaps; // throttle attempts either way (avoid churn)
             }
 
             capsLock = _lastCaps;
