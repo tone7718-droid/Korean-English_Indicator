@@ -188,8 +188,11 @@ public sealed class CaretLocator
         if (completed)
         {
             _uiaInFlight = null;
-            _lastUia = task.Status == TaskStatus.RanToCompletion ? task.Result : CaretAnchor.None;
-            _uiaBreaker.Record(healthy: true, now);
+            bool ranToCompletion = task.Status == TaskStatus.RanToCompletion;
+            _lastUia = ranToCompletion ? task.Result : CaretAnchor.None;
+            // A call that finished within budget but FAULTED is not a healthy
+            // provider - it must not reset the breaker's slow streak.
+            _uiaBreaker.Record(healthy: ranToCompletion, now);
             return _lastUia;
         }
 

@@ -575,10 +575,26 @@ public sealed class TrayApplicationContext : ApplicationContext
         _wake.Set(); // apply the new interval promptly
         _settings.Save();
         // Refresh the menu so checkmarks reflect the new state next open, and
-        // dispose the previous menu instead of leaving it for the GC.
-        ContextMenuStrip? old = _tray.ContextMenuStrip;
-        _tray.ContextMenuStrip = BuildMenu();
-        old?.Dispose();
+        // dispose the previous menu instead of leaving it for the GC. This is
+        // DEFERRED to the next message-loop pass: Persist() runs inside a menu
+        // item's Click/CheckedChanged handler, i.e. while WinForms is still
+        // processing a click on the CURRENT menu - disposing that menu here
+        // would let the framework finish the click on a disposed control.
+        try
+        {
+            _overlay.BeginInvoke((Action)(() =>
+            {
+                ContextMenuStrip? old = _tray.ContextMenuStrip;
+                _tray.ContextMenuStrip = BuildMenu();
+                old?.Dispose();
+            }));
+        }
+        catch (Exception ex)
+        {
+            // Handle may be tearing down during shutdown; the stale menu is
+            // harmless (checkmarks refresh on the next Persist).
+            _logger.Log("persist " + ex.GetType().Name);
+        }
     }
 
     /// <summary>Signal the worker to stop; returns true if it fully joined.</summary>
