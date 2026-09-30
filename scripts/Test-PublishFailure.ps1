@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $exe = Join-Path $root 'dist/HanEngIndicator.exe'
 $before = (Get-FileHash $exe -Algorithm SHA256).Hash
+ $previousExitCode = $global:LASTEXITCODE
 function global:dotnet { $global:LASTEXITCODE = 7 }
 try {
     $failed = $false
@@ -17,5 +18,8 @@ try {
     catch { $failed = $true }
     if (-not $failed) { throw 'Build incorrectly succeeded after dotnet failed.' }
 }
-finally { Remove-Item Function:\dotnet }
+finally {
+    Remove-Item Function:\dotnet
+    $global:LASTEXITCODE = $previousExitCode
+}
 Write-Host 'Failure handling preserved the previous release.'

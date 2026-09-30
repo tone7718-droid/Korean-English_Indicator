@@ -23,9 +23,6 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern IntPtr GetKeyboardLayout(uint idThread);
 
-    [DllImport("user32.dll")]
-    public static extern short GetKeyState(int nVirtKey);
-
     // ---- IME (IMM32) -------------------------------------------------------
 
     [DllImport("imm32.dll")]

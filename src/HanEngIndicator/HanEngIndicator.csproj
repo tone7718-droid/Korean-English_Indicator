@@ -53,8 +53,6 @@
   <ItemGroup>
     <FrameworkReference Include="Microsoft.WindowsDesktop.App" />
     <!-- UI Automation caret fallback for non-Win32 controls. -->
-    <Reference Include="UIAutomationClient" />
-    <Reference Include="UIAutomationTypes" />
     <!-- Global usings that UseWindowsForms would normally inject. -->
     <Using Include="System.Windows.Forms" />
     <Using Include="System.Drawing" />
