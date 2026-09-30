@@ -15,6 +15,7 @@ public sealed class OverlayForm : Form
 {
     private InputMode _mode = InputMode.Unknown;
     private bool _capsLock;
+    private long _lastTopmostAt;
     private int _badgeSize = 28;
     private float _fontPx = 16f;
 
@@ -78,6 +79,7 @@ public sealed class OverlayForm : Form
     /// </summary>
     public void ShowBadge(InputMode mode, bool capsLock, Point location, int badgeSize, double opacity)
     {
+        bool repaint = _mode != mode || _capsLock != capsLock || _badgeSize != Math.Max(16, badgeSize);
         _mode = mode;
         _capsLock = capsLock;
         _badgeSize = Math.Max(16, badgeSize);
@@ -97,22 +99,22 @@ public sealed class OverlayForm : Form
             Location = location;
         }
 
-        if (!Visible)
-        {
-            Show();
-        }
+        bool wasHidden = !Visible;
+        if (wasHidden) Show();
 
         // Re-assert top-most on every update (without activating). Other
         // top-most windows - e.g. dialogs/popups from the chart program - can
         // otherwise end up drawn above the badge, making it seem to disappear.
-        if (IsHandleCreated)
+        long now = Environment.TickCount64;
+        if (IsHandleCreated && (wasHidden || now - _lastTopmostAt >= 1000))
         {
+            _lastTopmostAt = now;
             NativeMethods.SetWindowPos(
                 Handle, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
                 NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
         }
 
-        Invalidate();
+        if (repaint || wasHidden) Invalidate();
     }
 
     public void HideBadge()
@@ -200,3 +202,4 @@ public sealed class OverlayForm : Form
         return path;
     }
 }
+

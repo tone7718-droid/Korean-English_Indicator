@@ -15,3 +15,8 @@ TestResults/
 # OS
 .DS_Store
 Thumbs.db
+
+
+# Releases are published as GitHub Release assets, not committed binaries.
+dist/
+dist.previous-*/

@@ -29,3 +29,11 @@ jobs:
 
       - name: Test
         run: dotnet test tests/HanEngIndicator.Tests/HanEngIndicator.Tests.csproj -c Release --no-build
+
+
+      - name: Windows packaging regression
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          ./publish-win-x64.ps1
+          ./scripts/Test-PublishFailure.ps1

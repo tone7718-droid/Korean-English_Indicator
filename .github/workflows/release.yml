@@ -1,0 +1,40 @@
+name: release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build and test
+        shell: powershell
+        run: ./build.ps1
+      - name: Package
+        shell: powershell
+        run: ./publish-win-x64.ps1
+      - name: Archive packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: HanEngIndicator-win-x64
+          path: dist/*
+      - name: Publish GitHub Release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v1.0.1-build.${{ github.run_number }}"
+          gh release create $tag ./dist/* --target "${{ github.sha }}" --title "HanEngIndicator $tag" --notes "장시간 사용 안정성, 입력 상태 및 설정 저장 개선. 다운로드는 폴더형 ZIP을 권장합니다. Windows 병원 차트 환경의 75분 실사용 검증은 별도로 진행해야 합니다." --latest
+          if ($LASTEXITCODE -ne 0) { throw "GitHub Release publishing failed." }

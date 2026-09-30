@@ -26,58 +26,6 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern short GetKeyState(int nVirtKey);
 
-    [DllImport("kernel32.dll")]
-    public static extern uint GetCurrentThreadId();
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool IsHungAppWindow(IntPtr hwnd);
-
-    /// <summary>Virtual key code for Caps Lock.</summary>
-    public const int VK_CAPITAL = 0x14;
-
-    /// <summary>
-    /// Reads the Caps Lock toggle. Returns the value, and sets
-    /// <paramref name="confident"/> to true only when we were able to attach to
-    /// the foreground thread's input queue for the read.
-    ///
-    /// Why confidence matters: GetKeyState reflects the CALLING thread's
-    /// message-queue key state, which is stale on our background worker (it pumps
-    /// no keyboard messages). Attaching to the foreground thread makes the two
-    /// share keyboard state (GetKeyboardState remarks). BUT AttachThreadInput's
-    /// own remarks warn that key state is *reset* after the call, so a read is
-    /// only trustworthy when the attach actually happened - and even then it
-    /// should be verified on real hardware. When we cannot attach (foreground
-    /// window not responding, no distinct foreground thread, or attach fails
-    /// across integrity/desktop) the direct read is best-effort only and the
-    /// caller should keep its previous value rather than trust it.
-    /// </summary>
-    public static bool ReadCapsLock(uint foregroundThreadId, IntPtr foregroundWindow, out bool confident)
-    {
-        uint self = GetCurrentThreadId();
-        bool safeToAttach = foregroundThreadId != 0
-            && foregroundThreadId != self
-            && (foregroundWindow == IntPtr.Zero || !IsHungAppWindow(foregroundWindow));
-
-        bool attached = safeToAttach && AttachThreadInput(self, foregroundThreadId, true);
-        try
-        {
-            confident = attached;
-            return (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
-        }
-        finally
-        {
-            if (attached)
-            {
-                AttachThreadInput(self, foregroundThreadId, false);
-            }
-        }
-    }
-
     // ---- IME (IMM32) -------------------------------------------------------
 
     [DllImport("imm32.dll")]
@@ -186,8 +134,6 @@ internal static class NativeMethods
 
     // ---- Layered / click-through window styles ----------------------------
 
-    public const int GWL_EXSTYLE = -20;
-    public const int WS_EX_LAYERED = 0x00080000;
     public const int WS_EX_TRANSPARENT = 0x00000020;
     public const int WS_EX_NOACTIVATE = 0x08000000;
     public const int WS_EX_TOOLWINDOW = 0x00000080;
@@ -199,11 +145,9 @@ internal static class NativeMethods
     // WM_IME_CONTROL
     public const uint WM_IME_CONTROL = 0x0283;
     public const int IMC_GETCONVERSIONMODE = 0x0001;
-    public const int IMC_GETOPENSTATUS = 0x0005;
 
     // IME conversion mode bits
     public const int IME_CMODE_NATIVE = 0x0001;     // Hangul (가) when set, alpha (A) when clear
-    public const int IME_CMODE_FULLSHAPE = 0x0008;
 
     // Korean keyboard layout primary language id (LANG_KOREAN).
     public const int LANG_KOREAN = 0x0412;
@@ -221,3 +165,4 @@ internal static class NativeMethods
         return len > 0 ? new string(buffer, 0, len) : string.Empty;
     }
 }
+

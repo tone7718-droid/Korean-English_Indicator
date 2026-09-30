@@ -34,7 +34,9 @@ public static class OverlayPolicy
         DateTime lastGoodAtUtc,
         DateTime nowUtc,
         int graceMs,
-        DisplayPolicy displayPolicy)
+        DisplayPolicy displayPolicy,
+        IntPtr lastGoodWindow = default,
+        IntPtr lastGoodFocus = default)
     {
         InputMode mode = current.Mode;
         bool caps = current.CapsLock;
@@ -44,6 +46,8 @@ public static class OverlayPolicy
         // GLYPH (mode + caps) for a short grace period. We deliberately do NOT
         // reuse any position/thread info from the past.
         if (mode == InputMode.Unknown &&
+            current.ForegroundWindow == lastGoodWindow &&
+            current.FocusedWindow == lastGoodFocus &&
             lastGoodMode != InputMode.Unknown &&
             (nowUtc - lastGoodAtUtc).TotalMilliseconds <= graceMs)
         {
@@ -61,3 +65,4 @@ public static class OverlayPolicy
         return new OverlayDecision(show, mode, caps);
     }
 }
+

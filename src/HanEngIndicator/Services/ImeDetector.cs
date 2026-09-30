@@ -22,16 +22,12 @@ namespace HanEngIndicator.Services;
 public sealed class ImeDetector
 {
     private readonly DiagnosticLogger _logger;
+    private readonly Func<bool> _readCapsLock;
 
-    // Caps Lock read throttle (worker thread only). ~300ms keeps A/a responsive
-    // while avoiding an AttachThreadInput on every 120ms cycle.
-    private const int CapsPollMs = 300;
-    private bool _lastCaps;
-    private DateTime _lastCapsAtUtc = DateTime.MinValue;
-
-    public ImeDetector(DiagnosticLogger logger)
+    public ImeDetector(DiagnosticLogger logger, Func<bool> readCapsLock)
     {
         _logger = logger;
+        _readCapsLock = readCapsLock;
     }
 
     public InputStateSnapshot Detect()
@@ -54,8 +50,9 @@ public sealed class ImeDetector
 
         if (!koreanLayout)
         {
-            // Non-Korean layout: typing produces Latin characters.
-            mode = InputMode.English;
+            // This tool distinguishes Korean from other layouts; only supported Latin
+            // layouts are labelled English. Other IMEs remain Unknown.
+            mode = layoutId is 0x0409 or 0x0809 ? InputMode.English : InputMode.Unknown;
         }
         else
         {
@@ -79,34 +76,14 @@ public sealed class ImeDetector
             }
         }
 
-        // Only meaningful for English input: Caps Lock decides A (upper) vs a (lower).
-        // Reading it requires briefly attaching to the foreground thread's input
-        // (see NativeMethods), which we throttle: Caps Lock changes rarely, so we
-        // re-read at most every CapsPollMs and reuse the cached value otherwise.
-        bool capsLock = false;
-        if (mode == InputMode.English)
+        bool capsLock = mode == InputMode.English && _readCapsLock();
+        var gui = new NativeMethods.GUITHREADINFO
         {
-            DateTime nowCaps = DateTime.UtcNow;
-            if ((nowCaps - _lastCapsAtUtc).TotalMilliseconds >= CapsPollMs)
-            {
-                bool reading = NativeMethods.ReadCapsLock(threadId, foreground, out bool confident);
-
-                // Only adopt a CONFIDENT read (we actually attached to the
-                // foreground input). A non-confident read may be reset/stale, so
-                // keep the last known value rather than risk showing a wrong 'a'.
-                if (confident)
-                {
-                    _lastCaps = reading;
-                }
-
-                _lastCapsAtUtc = nowCaps; // throttle attempts either way (avoid churn)
-            }
-
-            capsLock = _lastCaps;
-        }
-
+            cbSize = System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.GUITHREADINFO>(),
+        };
+        IntPtr focus = NativeMethods.GetGUIThreadInfo(threadId, ref gui) ? gui.hwndFocus : IntPtr.Zero;
         var snapshot = new InputStateSnapshot(
-            mode, koreanLayout, imeOpen, layoutId, className, threadId, capsLock);
+            mode, koreanLayout, imeOpen, layoutId, className, threadId, capsLock, foreground, focus);
 
         if (_logger.Enabled)
         {
@@ -207,3 +184,4 @@ public sealed class ImeDetector
         return true;
     }
 }
+

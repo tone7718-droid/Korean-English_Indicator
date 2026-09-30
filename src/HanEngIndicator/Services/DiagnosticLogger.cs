@@ -26,6 +26,9 @@ public sealed class DiagnosticLogger : IDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly Thread _writer;
     private volatile bool _enabled;
+    private int _queued;
+    private int _disposed;
+    private const int MaxQueuedLines = 512;
 
     private const long MaxBytes = 1_000_000; // ~1 MB cap; oldest is rotated out.
 
@@ -50,11 +53,16 @@ public sealed class DiagnosticLogger : IDisposable
 
     public void Log(string message)
     {
-        if (!_enabled)
+        if (!_enabled || Volatile.Read(ref _disposed) != 0)
         {
             return;
         }
 
+        if (Interlocked.Increment(ref _queued) > MaxQueuedLines)
+        {
+            Interlocked.Decrement(ref _queued);
+            return; // Disk trouble must never allow unbounded memory growth.
+        }
         try
         {
             // Enqueue is cheap and non-blocking; the writer thread does the I/O.
@@ -94,6 +102,7 @@ public sealed class DiagnosticLogger : IDisposable
             var sb = new StringBuilder();
             while (_queue.TryDequeue(out string? line))
             {
+                Interlocked.Decrement(ref _queued);
                 sb.AppendLine(line);
             }
 
@@ -128,19 +137,16 @@ public sealed class DiagnosticLogger : IDisposable
 
     public void Dispose()
     {
-        try
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        _enabled = false;
+        _cts.Cancel();
+        _signal.Set();
+        // Only the writer flushes. If a disk call is stuck, leave its handles
+        // alive until process exit rather than racing/disposal from this thread.
+        if (_writer.Join(1500))
         {
-            _cts.Cancel();
-            _signal.Set();
-            _writer.Join(1500);
+            _signal.Dispose();
+            _cts.Dispose();
         }
-        catch
-        {
-            // ignore
-        }
-
-        Flush();
-        _signal.Dispose();
-        _cts.Dispose();
     }
 }

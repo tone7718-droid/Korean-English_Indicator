@@ -29,7 +29,9 @@ public readonly record struct InputStateSnapshot(
     int KeyboardLayoutId,
     string ForegroundWindowClass,
     uint ForegroundThreadId,
-    bool CapsLock = false)
+    bool CapsLock = false,
+    IntPtr ForegroundWindow = default,
+    IntPtr FocusedWindow = default)
 {
     public static InputStateSnapshot Unknown { get; } = new(
         InputMode.Unknown, false, false, 0, string.Empty, 0, false);
@@ -52,3 +54,4 @@ public static class BadgeText
         _ => string.Empty,
     };
 }
+

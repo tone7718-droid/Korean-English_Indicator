@@ -44,7 +44,7 @@ public sealed class CaretLocator
                 CaretAnchor caret = TryGuiThreadCaret(snapshot.ForegroundThreadId);
                 if (!caret.HasValue && settings.UseUiAutomation)
                 {
-                    caret = ThrottledUiaCaret(NativeMethods.GetForegroundWindow());
+                    caret = ThrottledUiaCaret(snapshot.ForegroundWindow, snapshot.FocusedWindow);
                 }
 
                 CaretAnchor result = caret.HasValue ? caret : MouseAnchor();
@@ -118,10 +118,12 @@ public sealed class CaretLocator
     private CaretAnchor _lastUia = CaretAnchor.None;
     private DateTime _lastUiaAtUtc = DateTime.MinValue;
     private IntPtr _lastUiaHwnd;
+    private IntPtr _lastUiaFocus;
+    private IntPtr _inFlightFocus;
     private Task<CaretAnchor>? _uiaInFlight;
     private IntPtr _inFlightHwnd;
 
-    private CaretAnchor ThrottledUiaCaret(IntPtr foregroundWindow)
+    private CaretAnchor ThrottledUiaCaret(IntPtr foregroundWindow, IntPtr focusedWindow)
     {
         DateTime now = DateTime.UtcNow;
 
@@ -134,9 +136,10 @@ public sealed class CaretLocator
         // Invalidate the cache immediately when the foreground WINDOW changes
         // (not just the thread), so we never reuse another window's - or another
         // control's within the same thread - caret coordinates.
-        if (foregroundWindow != _lastUiaHwnd)
+        if (foregroundWindow != _lastUiaHwnd || focusedWindow != _lastUiaFocus)
         {
             _lastUiaHwnd = foregroundWindow;
+            _lastUiaFocus = focusedWindow;
             _lastUia = CaretAnchor.None;
             _lastUiaAtUtc = DateTime.MinValue;
         }
@@ -145,7 +148,8 @@ public sealed class CaretLocator
         // late result if the foreground window changed while it ran (stale).
         if (_uiaInFlight is { IsCompleted: true } finished)
         {
-            _lastUia = (finished.Status == TaskStatus.RanToCompletion && _inFlightHwnd == foregroundWindow)
+            _lastUia = (finished.Status == TaskStatus.RanToCompletion && _inFlightHwnd == foregroundWindow && _inFlightFocus == focusedWindow
+                    && IsCurrentContext(foregroundWindow, focusedWindow))
                 ? finished.Result
                 : CaretAnchor.None;
             _lastUiaAtUtc = now;
@@ -167,13 +171,16 @@ public sealed class CaretLocator
         // Throttle: within the window, reuse the cached anchor.
         if ((now - _lastUiaAtUtc).TotalMilliseconds < UiaThrottleMs)
         {
-            return _lastUia;
+            return IsCurrentContext(foregroundWindow, focusedWindow) ? _lastUia : CaretAnchor.None;
         }
 
         // Start a bounded UIA call on a background task.
         _lastUiaAtUtc = now;
         _inFlightHwnd = foregroundWindow;
-        Task<CaretAnchor> task = Task.Run(TryUiAutomationCaret);
+        _inFlightFocus = focusedWindow;
+        // A permanently blocked provider must not occupy the shared thread pool.
+        Task<CaretAnchor> task = Task.Factory.StartNew(TryUiAutomationCaret,
+            CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
 
         bool completed;
         try
@@ -189,7 +196,8 @@ public sealed class CaretLocator
         {
             _uiaInFlight = null;
             bool ranToCompletion = task.Status == TaskStatus.RanToCompletion;
-            _lastUia = ranToCompletion ? task.Result : CaretAnchor.None;
+            _lastUia = ranToCompletion && IsCurrentContext(foregroundWindow, focusedWindow)
+                ? task.Result : CaretAnchor.None;
             // A call that finished within budget but FAULTED is not a healthy
             // provider - it must not reset the breaker's slow streak.
             _uiaBreaker.Record(healthy: ranToCompletion, now);
@@ -209,6 +217,15 @@ public sealed class CaretLocator
         }
 
         return CaretAnchor.None;
+    }
+
+    private static bool IsCurrentContext(IntPtr foregroundWindow, IntPtr focusedWindow)
+    {
+        if (foregroundWindow == IntPtr.Zero || NativeMethods.GetForegroundWindow() != foregroundWindow)
+            return false;
+        uint tid = NativeMethods.GetWindowThreadProcessId(foregroundWindow, out _);
+        var gui = new NativeMethods.GUITHREADINFO { cbSize = Marshal.SizeOf<NativeMethods.GUITHREADINFO>() };
+        return NativeMethods.GetGUIThreadInfo(tid, ref gui) && gui.hwndFocus == focusedWindow;
     }
 
     // Reject empty / zero-height / absurd rectangles so the badge never jumps to
@@ -308,3 +325,4 @@ public sealed class CaretLocator
         return CaretAnchor.None;
     }
 }
+

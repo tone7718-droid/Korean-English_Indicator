@@ -10,8 +10,8 @@
     <RootNamespace>HanEngIndicator</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
-    <Version>1.0.0</Version>
-    <FileVersion>1.0.0.0</FileVersion>
+    <Version>1.0.1</Version>
+    <FileVersion>1.0.1.0</FileVersion>
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
     <Product>HanEngIndicator</Product>
     <Description>Korean/English IME input-state indicator overlay</Description>
@@ -61,3 +61,4 @@
   </ItemGroup>
 
 </Project>
+

@@ -71,7 +71,7 @@ public sealed class AppSettings
     /// fall back to the mouse pointer. A per-session circuit breaker also
     /// disables it automatically if it is repeatedly slow.
     /// </summary>
-    public bool UseUiAutomation { get; set; } = true;
+    public bool UseUiAutomation { get; set; } = false;
 
     /// <summary>Start automatically when Windows starts (HKCU Run key).</summary>
     public bool AutoStart { get; set; } = false;
@@ -100,52 +100,62 @@ public sealed class AppSettings
         Converters = { new JsonStringEnumConverter() },
     };
 
-    public static AppSettings Load()
+    public static AppSettings Load(string? filePath = null)
     {
-        try
+        string path = filePath ?? SettingsFilePath;
+        foreach (string candidate in new[] { path, path + ".bak" })
         {
-            if (File.Exists(SettingsFilePath))
+            try
             {
-                string json = File.ReadAllText(SettingsFilePath);
-                AppSettings? loaded = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions);
-                if (loaded is not null)
+                if (File.Exists(candidate))
                 {
-                    return loaded.Clamped();
+                    AppSettings? loaded = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(candidate), JsonOptions);
+                    if (loaded is not null) return loaded.Clamped();
                 }
             }
+            catch { /* Try the last valid backup before falling back. */ }
         }
-        catch
-        {
-            // Corrupt or unreadable settings should never crash the app;
-            // fall back to defaults.
-        }
-
         return new AppSettings();
     }
 
-    public void Save()
+    public bool Save(string? filePath = null)
     {
+        string path = filePath ?? SettingsFilePath;
+        string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            Directory.CreateDirectory(SettingsDirectory);
-            string json = JsonSerializer.Serialize(this, JsonOptions);
-            File.WriteAllText(SettingsFilePath, json);
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+            byte[] json = System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(Clamped(), JsonOptions));
+            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                stream.Write(json);
+                stream.Flush(flushToDisk: true);
+            }
+            if (File.Exists(path))
+                File.Replace(temporary, path, path + ".bak");
+            else
+                File.Move(temporary, path);
+            return true;
         }
-        catch
+        catch { return false; }
+        finally
         {
-            // Saving is best-effort. Failing to persist preferences must not
-            // interrupt the user's work.
+            try { File.Delete(temporary); } catch { }
         }
     }
 
     /// <summary>Clamp every value into a sane range. Returns this for chaining.</summary>
     public AppSettings Clamped()
     {
-        FontScale = Math.Clamp(FontScale, 0.6, 3.0);
-        Opacity = Math.Clamp(Opacity, 0.2, 1.0);
+        FontScale = double.IsFinite(FontScale) ? Math.Clamp(FontScale, 0.6, 3.0) : 1.0;
+        Opacity = double.IsFinite(Opacity) ? Math.Clamp(Opacity, 0.2, 1.0) : 1.0;
+        if (!Enum.IsDefined(DisplayPolicy)) DisplayPolicy = DisplayPolicy.Always;
+        if (!Enum.IsDefined(PositionMode)) PositionMode = PositionMode.CaretThenMouse;
+        if (!Enum.IsDefined(FixedCorner)) FixedCorner = ScreenCorner.BottomRight;
         OffsetX = Math.Clamp(OffsetX, -200, 200);
         OffsetY = Math.Clamp(OffsetY, -200, 200);
         PollingIntervalMs = Math.Clamp(PollingIntervalMs, 50, 500);
         return this;
     }
 }
+

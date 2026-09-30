@@ -23,6 +23,8 @@
 
   <!-- Platform-neutral production sources under test. -->
   <ItemGroup>
+    <Compile Include="..\..\src\HanEngIndicator\Services\LatestValueMailbox.cs"
+             Link="Production\LatestValueMailbox.cs" />
     <Compile Include="..\..\src\HanEngIndicator\Services\PositionCalculator.cs"
              Link="Production\PositionCalculator.cs" />
     <Compile Include="..\..\src\HanEngIndicator\Services\OverlayPolicy.cs"
@@ -38,3 +40,4 @@
   </ItemGroup>
 
 </Project>
+

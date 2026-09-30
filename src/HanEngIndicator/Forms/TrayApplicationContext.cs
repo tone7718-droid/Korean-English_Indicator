@@ -21,19 +21,30 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly CaretLocator _caret;
     private readonly OverlayForm _overlay;
     private readonly NotifyIcon _tray;
+    private readonly System.Windows.Forms.Timer _capsTimer;
+    private volatile bool _capsLock;
+    private IntPtr _lastGoodWindow;
+    private IntPtr _lastGoodFocus;
     private Icon? _trayIconHandle;
 
     // Background polling worker + coordination.
     private readonly Thread _worker;
     private readonly ManualResetEventSlim _wake = new(false);
     private volatile bool _stopping;
+    private readonly LatestValueMailbox<OverlayCommand> _uiMailbox = new();
     private volatile int _intervalMs;
 
     public TrayApplicationContext()
     {
         _settings = AppSettings.Load();
         _logger = new DiagnosticLogger { Enabled = _settings.DiagnosticLogging };
-        _detector = new ImeDetector(_logger);
+        // Read the toggle on the message-pumping UI thread, never by attaching
+        // input queues from a worker. This does not inspect typed characters.
+        _capsLock = Control.IsKeyLocked(Keys.CapsLock);
+        _capsTimer = new System.Windows.Forms.Timer { Interval = 100 };
+        _capsTimer.Tick += (_, _) => _capsLock = Control.IsKeyLocked(Keys.CapsLock);
+        _capsTimer.Start();
+        _detector = new ImeDetector(_logger, () => _capsLock);
         _caret = new CaretLocator(_logger);
         _overlay = new OverlayForm();
 
@@ -78,7 +89,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     /// <summary>A single unit of work handed from the worker to the UI thread.</summary>
     private readonly record struct OverlayCommand(
-        bool Show, InputMode Mode, bool CapsLock, Point Location, int BadgeSize, double Opacity)
+        bool Show, InputMode Mode, bool CapsLock, Point Location, int BadgeSize, double Opacity, IntPtr ForegroundWindow = default, IntPtr FocusedWindow = default)
     {
         public static OverlayCommand Idle { get; } =
             new(false, InputMode.Unknown, false, Point.Empty, 0, 1.0);
@@ -138,12 +149,14 @@ public sealed class TrayApplicationContext : ApplicationContext
             _lastGoodMode = snapshot.Mode;
             _lastGoodCaps = snapshot.CapsLock;
             _lastGoodAtUtc = DateTime.UtcNow;
+            _lastGoodWindow = snapshot.ForegroundWindow;
+            _lastGoodFocus = snapshot.FocusedWindow;
         }
 
         int graceMs = Math.Max(800, _intervalMs * 6);
         OverlayDecision decision = OverlayPolicy.Decide(
             snapshot, _lastGoodMode, _lastGoodCaps, _lastGoodAtUtc,
-            DateTime.UtcNow, graceMs, _settings.DisplayPolicy);
+            DateTime.UtcNow, graceMs, _settings.DisplayPolicy, _lastGoodWindow, _lastGoodFocus);
 
         if (!decision.Show)
         {
@@ -198,22 +211,24 @@ public sealed class TrayApplicationContext : ApplicationContext
             topLeft = PositionCalculator.ComputeTopLeft(anchor.ScreenRect, badgeSize, offsetPx, workArea);
         }
 
-        return new OverlayCommand(true, decision.Mode, decision.CapsLock, topLeft, badge, _settings.Opacity);
+        return new OverlayCommand(true, decision.Mode, decision.CapsLock, topLeft, badge, _settings.Opacity, snapshot.ForegroundWindow, snapshot.FocusedWindow);
     }
 
     /// <summary>Marshal a command to the UI thread. Never blocks the worker.</summary>
     private void PostToUi(OverlayCommand cmd)
     {
+        if (_stopping || !_uiMailbox.Publish(cmd)) return;
         try
         {
             if (_overlay.IsHandleCreated)
-            {
-                _overlay.BeginInvoke((Action)(() => ApplyOnUi(cmd)));
-            }
+                _overlay.BeginInvoke((Action)(() => ApplyOnUi(_uiMailbox.Take())));
+            else
+                _uiMailbox.Cancel();
         }
         catch (Exception ex)
         {
             // Handle may be tearing down during shutdown; ignore.
+            _uiMailbox.Cancel();
             _logger.Log("post " + ex.GetType().Name);
         }
     }
@@ -223,6 +238,12 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         try
         {
+            if (_stopping) return;
+            if (cmd.Show && !IsCurrentContext(cmd))
+            {
+                _overlay.HideBadge();
+                return;
+            }
             UpdateTrayIcon(cmd.Mode, cmd.CapsLock);
 
             if (cmd.Show)
@@ -238,6 +259,17 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             _logger.Log("apply " + ex.GetType().Name);
         }
+    }
+
+    private static bool IsCurrentContext(OverlayCommand cmd)
+    {
+        if (NativeMethods.GetForegroundWindow() != cmd.ForegroundWindow) return false;
+        uint tid = NativeMethods.GetWindowThreadProcessId(cmd.ForegroundWindow, out _);
+        var gui = new NativeMethods.GUITHREADINFO
+        {
+            cbSize = System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.GUITHREADINFO>(),
+        };
+        return NativeMethods.GetGUIThreadInfo(tid, ref gui) && gui.hwndFocus == cmd.FocusedWindow;
     }
 
     /// <summary>
@@ -306,6 +338,11 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         if (mode == InputMode.Unknown)
         {
+            if (_lastTrayGlyph != "?")
+            {
+                _lastTrayGlyph = "?";
+                SetTrayIcon(BuildTrayIcon(mode, "?"));
+            }
             return;
         }
 
@@ -573,7 +610,11 @@ public sealed class TrayApplicationContext : ApplicationContext
         _settings.Clamped();
         _intervalMs = _settings.PollingIntervalMs;
         _wake.Set(); // apply the new interval promptly
-        _settings.Save();
+        if (!_settings.Save())
+        {
+            _tray.ShowBalloonTip(4000, "HanEng Indicator",
+                "설정을 저장하지 못했습니다. 현재 설정은 이번 실행에만 적용됩니다.", ToolTipIcon.Warning);
+        }
         // Refresh the menu so checkmarks reflect the new state next open, and
         // dispose the previous menu instead of leaving it for the GC. This is
         // DEFERRED to the next message-loop pass: Persist() runs inside a menu
@@ -632,6 +673,8 @@ public sealed class TrayApplicationContext : ApplicationContext
                 _wake.Dispose();
             }
 
+            _capsTimer.Stop();
+            _capsTimer.Dispose();
             _tray.Dispose();
             if (_trayIconHandle is not null)
             {
@@ -646,3 +689,4 @@ public sealed class TrayApplicationContext : ApplicationContext
         base.Dispose(disposing);
     }
 }
+

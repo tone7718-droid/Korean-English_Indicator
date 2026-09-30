@@ -18,7 +18,7 @@ Windows에서 현재 입력 모드가 **한글(가)** 인지, **영문 대문자
 
 ## 1. 비개발자용 사용 방법 (가장 빠른 길)
 
-1. 배포된 **`HanEngIndicator-win-x64.zip`** 파일의 압축을 풉니다.
+1. [최신 배포 페이지](https://github.com/tone7718-droid/Korean-English_Indicator/releases/latest)에서 **`HanEngIndicator-win-x64-folder.zip`** 파일을 받아 압축을 풉니다. 단일 EXE ZIP도 제공합니다.
 2. 안에 들어 있는 **`HanEngIndicator.exe`** 를 더블클릭해 실행합니다.
 3. Windows 보안 경고("Windows의 PC 보호")가 나오면, 파일을 신뢰할 수 있을 때
    **추가 정보 → 실행**을 누릅니다. (아래 "문제 해결" 참고. 파일 속성 →
@@ -87,7 +87,7 @@ Windows에서 현재 입력 모드가 **한글(가)** 인지, **영문 대문자
 |-----|------|
 | `GetForegroundWindow`, `GetWindowThreadProcessId`, `GetClassName` | 활성 창/스레드 식별 |
 | `GetKeyboardLayout` | 키보드 레이아웃(한국어 여부) 확인 |
-| `AttachThreadInput` + `GetKeyState(VK_CAPITAL)` | 영문 입력 시 Caps Lock 상태(A/a) 확인 (전경 스레드 입력 상태 공유) |
+| `Control.IsKeyLocked(Keys.CapsLock)` | 메시지 루프가 있는 UI 스레드에서 Caps Lock 토글 상태를 100ms마다 확인 |
 | `ImmGetDefaultIMEWnd` + `SendMessageTimeout(WM_IME_CONTROL, IMC_GETCONVERSIONMODE)` | 한국어 IME의 실제 한/영 상태 조회 (주 방식) |
 | `ImmGetContext`, `ImmGetConversionStatus`, `ImmGetOpenStatus`, `ImmReleaseContext` | IME 상태 조회 (보조 방식) |
 | `GetGUIThreadInfo` (`rcCaret`), `ClientToScreen` | 캐럿 좌표 감지 |
@@ -223,26 +223,25 @@ publish-win-x64.ps1
 해시와 다운로드한 EXE의 해시(`Get-FileHash`)가 일치하는지 비교할 수 있습니다.
 
 **Q. AhnLab(V3) 등 백신이 차단해서 실행이 안 돼요.**
-이는 바이러스가 아니라 **오탐(false positive)** 입니다. 원인은 (1) 코드 서명이
+소스 검토만으로 해당 배포 파일의 백신 탐지가 오탐이라고 단정할 수 없습니다. (1) 코드 서명이
 없는 새 EXE, (2) 단일 EXE 방식이 실행 시 자기 자신을 임시폴더에 풀기 때문에
-백신 휴리스틱이 의심하는 것입니다. 이 프로그램은 네트워크·키로깅을 하지 않으며,
+백신 휴리스틱의 탐지에 영향을 줄 수 있습니다. 이 프로그램은 네트워크·키로깅을 하지 않으며,
 환자 데이터·차트 파일·문서는 읽거나 변경하지 않습니다(소스 전체 공개). 다만 자체
 설정(settings.json)과 선택적 진단 로그는 로컬에 저장하고, 자동 실행을 켜면 레지스트리
 (HKCU Run) 또는 작업 스케줄러를 변경합니다. 해결 방법은 다음과 같습니다.
 
 1. **폴더형 버전을 쓰세요(권장).** 단일 EXE 대신
    `HanEngIndicator-win-x64-folder.zip` 를 받아 압축을 풀고 그 안의
-   `HanEngIndicator.exe` 를 실행하면, 자기 추출을 하지 않아 차단 확률이 크게
-   낮아집니다. (기능은 단일 EXE와 동일)
+   `HanEngIndicator.exe` 를 실행하면, 자기 추출을 하지 않아 백신이 판단하는 동작이 달라질 수 있습니다. 다만 차단 해제는 보장하지 않습니다. (기능은 단일 EXE와 동일)
 2. **백신에 예외(허용) 등록.** AhnLab V3 기준:
    `V3 환경 설정 → 검사 → 검사 예외 설정(예외 폴더/파일)` 에서
    `HanEngIndicator.exe`(또는 풀어 놓은 폴더)를 예외로 추가합니다.
    회사/병원 PC라면 IT 관리자나 보안 정책상 관리자에게 요청해야 할 수 있습니다.
 3. **오탐 신고.** AhnLab 오탐 신고 페이지에 파일을 제출하면 분석 후 탐지가
    해제됩니다: <https://www.ahnlab.com/site/securityinfo/falsepositive/> .
-   제출 시 `SHA256SUMS.txt` 의 해시를 함께 적어 무결성을 증명할 수 있습니다.
+   제출 시 `SHA256SUMS.txt` 의 해시를 함께 적어 분석 대상 파일을 식별할 수 있습니다.
 4. **근본 해결(선택): 코드 서명.** Authenticode 코드 서명 인증서로 EXE에
-   서명하면 SmartScreen·백신 경고가 사라집니다. 인증서는 유료(연 단위)이며,
+   서명하면 배포자 식별과 무결성 확인에 도움이 되지만 SmartScreen·백신 경고가 사라진다고 보장하지는 않습니다. 인증서는 유료(연 단위)이며,
    병원에서 인증서를 보유했다면 `signtool` 로 서명해 배포할 수 있습니다.
 
 
@@ -265,3 +264,31 @@ publish-win-x64.ps1
 내부 도구용 예제 코드입니다. 의료 환경에서 사용하기 전 반드시 자체 검증을
 거치세요. 이 프로그램은 입력 보조용 표시기일 뿐이며 차트 데이터의 정확성을
 보장하지 않습니다.
+
+
+
+## 9. 장시간 사용 안정성 및 배포 관리 (1.0.1)
+
+- 화면 갱신은 최신 요청 1개만 대기합니다. UI가 느려져도 오래된 요청이 계속 쌓이지 않습니다.
+- 배지 내용이 바뀔 때 다시 그리며, 최상위 창 재설정은 최대 1초에 한 번입니다.
+- 진단 로그 대기량은 512줄로 제한합니다. 디스크 오류·지연 시 초과 로그를 버리고 입력 작업을 우선합니다.
+- 입력 스레드를 연결하는 `AttachThreadInput` 방식은 제거했습니다. `A/a`는 Caps Lock 토글 표시이며 Shift·앱 자체 대소문자 변환까지 예측하지 않습니다.
+- UI Automation은 새 설정에서 기본 **끔**입니다. 표준 캐럿 → 마우스 위치로 표시합니다. 브라우저나 특수 입력칸에서 필요하면 트레이 메뉴에서 켜세요. 기존 설정의 선택은 유지합니다.
+- UI Automation은 한 번에 1개만 조회합니다. 지연 시 마우스로 전환하며 공유 스레드 풀을 점유하지 않습니다. 같은 창이라도 네이티브 입력 컨트롤이 바뀌면 위치 캐시를 초기화합니다. 같은 네이티브 창을 공유하는 웹 입력칸은 최대 400ms 갱신 지연이 남을 수 있습니다.
+- 창·입력 컨트롤 전환 시 이전 한·영 상태를 재사용하지 않습니다. 감지 불가 시 배지를 숨기고 트레이에 `?`를 표시합니다. 한글 IME 및 미국/영국 영어 레이아웃을 지원하며 다른 언어는 감지 불가로 처리합니다.
+- 설정을 임시 파일에 기록한 뒤 교체하며, 이전 설정을 `settings.json.bak`에 보관합니다. 손상 시 백업을 읽고 저장 실패는 트레이 알림으로 표시합니다.
+- 실행 파일·ZIP·SHA-256 목록은 GitHub Releases로 배포합니다. `dist/`는 로컬 생성물이며 Git에 포함하지 않습니다. 예전 배포는 [정리 전 커밋](https://github.com/tone7718-droid/Korean-English_Indicator/tree/73b5f57e856229d3a7ba43590a416125b3f9a360/dist)에 남아 있습니다.
+- 빌드·테스트·배포 명령이 실패하면 즉시 중단합니다. 두 배포 형태가 모두 완성될 때까지 기존 `dist/`를 유지합니다.
+
+### 75분 실사용 점검
+
+현재 배포의 빌드·회귀 테스트 통과는 실제 병원 PC에서 1시간 이후 렉이 없다는 보장이 아닙니다.
+문제가 발생했던 PC에서 원래 차트 작업을 하며 아래 스크립트를 별도 PowerShell에서 실행하세요:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\Measure-LongSession.ps1 -DurationMinutes 75
+```
+
+실행 파일은 먼저 켜두어야 합니다. CSV에는 표시기 프로세스의 메모리·누적 CPU 시간·스레드·핸들·GDI/USER 자원 수만 기록하며 환자정보나 타이핑 내용은 기록하지 않습니다.
+처음과 마지막 구간의 자원 추이, 렉 발생 시각을 함께 비교하세요. 누적 CPU 시간 자체는 정상적으로 증가하므로 구간별 증가량으로 판단해야 합니다.
+UI Automation을 끈 상태와 켠 상태를 따로 측정하면 원인을 좁힐 수 있습니다. 장시간 실제 Windows 사용 검증은 아직 필요합니다.
