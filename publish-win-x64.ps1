@@ -12,7 +12,7 @@ $folderDir = Join-Path $staging "folder"
 $packageDir = Join-Path $staging "packages"
 $dist = Join-Path $root "dist"
 $backup = Join-Path $root ("dist.previous-" + [Guid]::NewGuid().ToString("N"))
-$extras = @("README.md", "Install-AutoStartAdmin.cmd", "Uninstall-AutoStartAdmin.cmd")
+$extras = @("README.md", "Install-AutoStartAdmin.cmd", "Uninstall-AutoStartAdmin.cmd", "scripts/Measure-LongSession.ps1")
 foreach ($f in $extras) {
     if (-not (Test-Path (Join-Path $root $f))) { throw "Missing release file: $f" }
 }
@@ -31,7 +31,11 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Folder publish failed ($LASTEXITCODE)." }
     foreach ($d in @($singleDir, $folderDir)) {
         if (-not (Test-Path (Join-Path $d "HanEngIndicator.exe"))) { throw "Executable missing in $d" }
-        foreach ($f in $extras) { Copy-Item (Join-Path $root $f) $d -Force }
+        foreach ($f in $extras) {
+            $destination = Join-Path $d $f
+            New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+            Copy-Item (Join-Path $root $f) $destination -Force
+        }
     }
     Copy-Item (Join-Path $singleDir "HanEngIndicator.exe") $packageDir
     Compress-Archive -Path (Join-Path $singleDir "*") -DestinationPath (Join-Path $packageDir "HanEngIndicator-win-x64.zip")
